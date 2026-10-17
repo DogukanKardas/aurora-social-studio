@@ -87,6 +87,14 @@
 
   <!-- TRENDLER -->
   <section id="trend">
+    <div class="panel row" style="margin-bottom:16px;gap:8px">
+      <b class="small">Kanada'da şu an:</b>
+      <button class="btn sm" data-quick="Google Trends">Google aramaları</button>
+      <button class="btn sm" data-quick="YouTube Trending">YouTube</button>
+      <button class="btn sm" data-quick="TikTok Trending Hashtags">TikTok hashtag</button>
+      <button class="btn sm" data-quick="X (Twitter) Trending">X (Twitter)</button>
+      <span class="muted small">Her liste günde bir kez yenilenir (1 istek); aynı gün tekrar açmak ücretsiz.</span>
+    </div>
     <div class="grid2">
       <div class="panel stack">
         <h2>Trend araştırması</h2>
@@ -94,46 +102,58 @@
         <select id="trMode">
           <option value="growth">Bir konu büyüyor mu? (büyüme oranı)</option>
           <option value="series">Bir konunun ilgisi zamanla nasıl değişti?</option>
+          <option value="posts">Bir hashtag'de en çok etkileşim alan paylaşımlar</option>
           <option value="top">Şu an neler yükseliyor? (canlı liste)</option>
         </select>
         <div id="trTopicBox">
           <label>Nerede bakalım?</label><select id="trSource"></select>
-          <label>Konu</label><select id="trKeyword"></select>
-          <input id="trKeywordCustom" placeholder="Kendi konunu yaz" style="display:none;margin-top:6px">
+          <label id="trKwLabel">Konu</label><select id="trKeyword"></select>
+          <input id="trKeywordCustom" placeholder="Kendi konunu yaz (İngilizce)" style="display:none;margin-top:6px">
+          <p class="muted small" id="trGeoNote" style="margin:6px 0 0">Bu sorgu dünya geneli veri verir. Kanada'yı ölçmek için yerel kelimeler seç (ICBC, BC, Vancouver…).</p>
         </div>
         <div id="trWindowBox">
           <label>Hangi dönem?</label>
-          <select id="trWindow">
-            <option value="1M,3M,12M">Son 1 ay, 3 ay ve 12 ay (karşılaştırmalı)</option>
-            <option value="30D">Son 30 gün</option>
-            <option value="3M">Son 3 ay</option>
-            <option value="6M">Son 6 ay</option>
-            <option value="12M">Son 12 ay</option>
-            <option value="YTD">Yılbaşından bu yana</option>
-          </select>
+          <select id="trWindow"></select>
         </div>
         <div id="trFeedBox" style="display:none">
           <label>Hangi liste?</label>
-          <select id="trFeed">
-            <option>YouTube Trending</option>
-            <option>TikTok Trending Hashtags</option>
-            <option>TikTok Trending Searches</option>
-            <option>Google Trends</option>
-            <option>Google News Top News</option>
-            <option>Reddit Hot Posts</option>
-            <option>X (Twitter) Trending</option>
-          </select>
+          <select id="trFeed"></select>
+          <div class="row">
+            <div style="flex:1" id="trCountryBox"><label>Ülke</label><select id="trCountry"></select></div>
+            <div style="flex:1" id="trSortBox"><label>Sıralama</label><select id="trSort"><option value="">Şu an en üsttekiler</option><option value="rank_change">En hızlı yükselenler</option></select></div>
+          </div>
+          <div class="row">
+            <div style="flex:1;display:none" id="trTWindowBox"><label>Ne kadar sürede yükselenler?</label><select id="trTWindow"><option value="1d">Son 1 gün</option><option value="3d">Son 3 gün</option><option value="7d" selected>Son 7 gün</option><option value="14d">Son 14 gün</option><option value="30d">Son 30 gün</option></select></div>
+            <div style="flex:1;display:none" id="trCategoryBox"><label>Kategori (resmi adı)</label><input id="trCategory" placeholder="Boş bırakırsan servis kategori adlarını listeler"></div>
+          </div>
+          <p class="muted small" id="trCountryNote" style="margin:6px 0 0;display:none">Bu liste için ülke seçilemiyor; servis ABD listesini verir.</p>
+        </div>
+        <div id="trLimitBox" style="display:none">
+          <label>Kaç sonuç?</label>
+          <select id="trLimit"><option>10</option><option selected>20</option><option>50</option></select>
         </div>
         <button class="btn primary" id="trRun">Göster</button>
-        <p class="muted small">Ücretsiz planda aylık istek sınırı var; her "Göster" bir istek harcar.</p>
+        <p class="muted small" id="trUsage">Ücretsiz planda aylık istek sınırı var; her yeni sorgu bir istek harcar. Aynı sorgu 24 saat içinde tekrar istenirse geçmişten gelir.</p>
+        <p class="small" id="trSchemaNote" style="color:var(--warn);display:none"></p>
       </div>
       <div class="panel stack">
-        <div class="row spread"><h2>Sonuç</h2><button class="btn sm" id="trSave" disabled>Fikir olarak kaydet</button></div>
+        <div class="row spread"><h2>Sonuç</h2><div class="row" style="gap:6px"><button class="btn sm" id="trRefresh" style="display:none">Yeniden sorgula (1 istek)</button><button class="btn sm" id="trSave" disabled>Fikir olarak kaydet</button></div></div>
         <div id="trView"><p class="muted">Soldan seçimini yap ve "Göster"e bas.</p></div>
         <details><summary class="muted small">Ham veri</summary><pre class="result" id="trResult"></pre></details>
       </div>
     </div>
-    <h2 style="margin:24px 0 12px">Geçmiş aramalar</h2>
+    <div class="panel stack" style="margin-top:20px">
+      <div class="row spread"><h2>Kanada takip listesi</h2><div class="row" style="gap:6px"><button class="btn sm" id="wReset">Önerilen listeyi yükle</button><button class="btn primary sm" id="wRun">Hepsini kontrol et</button></div></div>
+      <p class="muted small" id="wInfo">Takip ettiğin kelimelerin son 1 ve 3 aydaki değişimini tek tabloda karşılaştırır. Haftada bir kontrol etmek yeterli.</p>
+      <div class="row" style="gap:6px">
+        <select id="wKeyword" style="flex:2;min-width:200px"></select>
+        <input id="wCustom" placeholder="Kendi kelimen (İngilizce)" style="flex:2;min-width:160px;display:none">
+        <select id="wSource" style="width:auto"></select>
+        <button class="btn sm" id="wAdd">Listeye ekle</button>
+      </div>
+      <div id="wTable"></div>
+    </div>
+    <div class="row spread" style="margin:24px 0 12px"><h2>Geçmiş aramalar</h2><button class="btn sm danger" id="trClear">Geçmişi temizle</button></div>
     <div class="cards" id="trHistory"></div>
   </section>
 

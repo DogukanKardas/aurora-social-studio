@@ -43,6 +43,7 @@ function showTab() {
   $$('nav a').forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
   if (tab === 'gorsel') { renderCanvaBar(); renderLibrary(); }
   if (tab === 'video') renderVideoImages();
+  if (tab === 'trend') loadTrendSchema();
 }
 window.addEventListener('hashchange', showTab);
 
@@ -203,7 +204,7 @@ $('#calCsv').onclick = () => {
   const rows = state.posts.filter(p => p.date.startsWith(key) && visiblePost(p)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
   const cols = [['Tarih', 'date'], ['Saat', 'time'], ['Platformlar', p => (p.platforms || []).join(' + ')], ['Format', 'format'], ['Sütun', 'pillar'], ['Konu', 'topic'], ['Durum', 'status'], ['Caption', 'caption'], ['Notlar', 'notes']];
   const cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const csv = '﻿' + [cols.map(c => cell(c[0])).join(','), ...rows.map(p => cols.map(([, f]) => cell(typeof f === 'function' ? f(p) : p[f])).join(','))].join('\r\n');
+  const csv = String.fromCharCode(0xFEFF) + [cols.map(c => cell(c[0])).join(','), ...rows.map(p => cols.map(([, f]) => cell(typeof f === 'function' ? f(p) : p[f])).join(','))].join('\r\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
   a.download = `aurora-takvim-${key}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
@@ -376,10 +377,6 @@ const TREND_SOURCES = [
   ['google search', 'Google aramaları'], ['youtube', 'YouTube'], ['tiktok', 'TikTok'],
   ['reddit', 'Reddit (topluluk)'], ['amazon', 'Amazon'], ['google news', 'Google Haberler'],
 ];
-const TREND_TOPICS = ['dash cam', 'dash cam installation', 'dash cam with parking mode', 'front and rear dash cam', '4k dash cam',
-  'car camera', 'dashcam footage', 'car accident', 'road rage', 'ICBC claim', 'winter driving', 'Vancouver traffic', 'Tesla dashcam'];
-const TREND_SUBREDDITS = ['Dashcam', 'vancouver', 'britishcolumbia', 'IdiotsInCars', 'cars', 'CarAV'];
-const TREND_TIKTOK = ['dashcam', 'dashcamfootage', 'carcamera', 'vancouver', 'cartok', 'roadrage'];
 const GEN_PRESETS = [
   ['Kış öncesi: karanlık ve yağmurlu sürüşte net kayıt', 'Fall/winter in Vancouver: dark commutes, rain and glare. Why footage clarity at night matters.'],
   ['Park modu ve akü koruması', 'Parking mode explained: hit-and-runs in parking lots, low-voltage cutoff, battery protection.'],
@@ -416,65 +413,272 @@ function presetSelect(sel, list, target, ownLabel = 'Kendim yazacağım…') {
 }
 
 // ============================================================ TRENDLER
-let trLast = null;
+// Büyüme/zaman serisi dünya geneli veridir (ülke filtresi yok) → Kanada sinyali için yerel kelimeler kullanılır.
+// Canlı listelerde (Google Trends, YouTube, TikTok hashtag, X) ülke seçilebilir → varsayılan Kanada.
+let trLast = null, trLastReq = null, trSchema = null, trSchemaLoading = null;
+const MODE_INTENT = { growth: 'get_growth', series: 'get_time_series', posts: 'get_top_posts', top: 'get_top_trends' };
+const TR_LABEL = { 'google search': 'Google aramaları', google: 'Google', 'google news': 'Google Haberler', 'google shopping': 'Google Alışveriş', 'google images': 'Google Görseller',
+  youtube: 'YouTube', tiktok: 'TikTok', reddit: 'Reddit', amazon: 'Amazon', instagram: 'Instagram', x: 'X (Twitter)', twitter: 'X (Twitter)', facebook: 'Facebook', linkedin: 'LinkedIn', pinterest: 'Pinterest', wikipedia: 'Wikipedia', news: 'Haberler', 'news volume': 'Haber hacmi', 'news sentiment': 'Haber tonu' };
+const WIN_LABEL = { '7D': 'Son 7 gün', '1W': 'Son 1 hafta', '14D': 'Son 14 gün', '2W': 'Son 2 hafta', '30D': 'Son 30 gün', '1M': 'Son 1 ay', '2M': 'Son 2 ay', '3M': 'Son 3 ay', '6M': 'Son 6 ay', '9M': 'Son 9 ay', '12M': 'Son 12 ay', '1Y': 'Son 1 yıl', '18M': 'Son 18 ay', '24M': 'Son 24 ay', '2Y': 'Son 2 yıl', MTD: 'Bu ay başından beri', QTD: 'Bu çeyrek başından beri', YTD: 'Yılbaşından bu yana', '1d': 'Son 1 gün', '3d': 'Son 3 gün', '7d': 'Son 7 gün', '14d': 'Son 14 gün', '30d': 'Son 30 gün' };
+const COUNTRY_LABEL = { CA: 'Kanada', US: 'ABD', GB: 'Birleşik Krallık', AU: 'Avustralya', TR: 'Türkiye', DE: 'Almanya', IN: 'Hindistan' };
+const FEED_LABEL = { 'Google Trends': 'Google aramalarında yükselenler', 'Google Trends by Category': 'Google aramaları (kategoriye göre)', 'YouTube Trending': 'YouTube trendleri', 'TikTok Trending Hashtags': 'TikTok trend hashtag\'leri', 'TikTok Trending Hashtags by Category': 'TikTok hashtag\'leri (kategoriye göre)', 'TikTok Trending Searches': 'TikTok trend aramaları', 'X (Twitter) Trending': 'X (Twitter) gündemi', 'Reddit Hot Posts': 'Reddit popüler gönderiler', 'Google News Top News': 'Google Haberler manşetler', 'Amazon Best Sellers by Category': 'Amazon çok satanlar (kategoriye göre)' };
+const COUNTRY_FEEDS = ['Google Trends', 'Google Trends by Category', 'YouTube Trending', 'TikTok Trending Hashtags', 'TikTok Trending Hashtags by Category', 'X (Twitter) Trending'];
+const RELEVANT_SOURCES = ['google search', 'youtube', 'google news', 'google shopping', 'tiktok', 'reddit', 'amazon', 'news volume', 'wikipedia'];
+const FALLBACK = {
+  source: RELEVANT_SOURCES.slice(0, 7),
+  postSource: ['tiktok', 'instagram'],
+  percent_growth: ['1M', '3M', '7D', '2M', 'MTD', 'QTD', '6M', '12M', 'YTD'],
+  type: Object.keys(FEED_LABEL),
+};
+// Kanada / BC odaklı anahtar kelimeler (İngilizce; servis İngilizce arama verisi kullanıyor)
+const TREND_KW_GROUPS = [
+  ['Dashcam — Kanada / yerel', ['dash cam Canada', 'dash cam Vancouver', 'best dash cam Canada', 'dash cam installation Vancouver', 'ICBC dash cam', 'dash cam BC']],
+  ['Dashcam — genel', ['dash cam', 'dash cam installation', 'front and rear dash cam', '4k dash cam', 'dash cam with parking mode', 'hardwire dash cam']],
+  ['ICBC ve sigorta', ['ICBC', 'ICBC claim', 'ICBC rates', 'ICBC dash cam footage', 'car insurance BC', 'staged accident']],
+  ['Trafik ve yollar (BC)', ['Vancouver traffic', 'DriveBC', 'Highway 1 traffic', 'Sea to Sky Highway', 'Coquihalla', 'Massey Tunnel', 'Port Mann Bridge', 'Lions Gate Bridge']],
+  ['Kaza ve güvenlik', ['Vancouver car accident', 'hit and run Vancouver', 'road rage Canada', 'car theft Canada', 'catalytic converter theft', 'parking lot hit and run']],
+  ['Mevsim ve sürüş', ['BC winter tires', 'snow Vancouver', 'black ice', 'winter driving BC', 'Vancouver rain']],
+  ['Rakipler ve markalar', ['Thinkware dash cam', 'BlackVue', 'Garmin dash cam', 'Viofo', 'Vantrue', 'Nextbase', 'Tesla dashcam', 'Tesla Sentry Mode']],
+  ['Bayi, filo, sürücüler', ['fleet dash cam', 'Uber driver dash cam', 'rideshare dash cam', 'car dealership Vancouver', 'used cars Vancouver']],
+];
+const HASHTAG_GROUPS = [
+  ['Dashcam', ['dashcam', 'dashcamfootage', 'dashcamvideos', 'dashcamlife', 'carcamera']],
+  ['Vancouver / BC', ['vancouver', 'vancouverbc', 'yvr', 'bcdrivers', 'britishcolumbia', 'icbc']],
+  ['Sürüş ve yollar', ['roadrage', 'baddrivers', 'canadadrivers', 'wintertires', 'winterdriving']],
+  ['Araç kültürü', ['carsofvancouver', 'tesla', 'carmods', 'cartok', 'cardetailing']],
+];
+// canlı listelerde markayla ilgili konuları işaretle
+const RELEVANT = /\b(car|cars|auto|autos|driv\w*|road|roads|highway|traffic|crash\w*|accident\w*|collision|icbc|insurance|snow|ice|winter|tires?|tyres?|storm|rain|weather|tesla|ev|vehicles?|trucks?|dash ?cams?|camera|theft|stolen|police|rcmp|vancouver|bc|surrey|burnaby|richmond|coquitlam|ferry|bridge|tunnel)\b/i;
+const trTool = intent => (trSchema || []).find(t => t.intent === intent);
+const trParam = (intent, p) => trTool(intent)?.params?.[p];
+const trValues = (intent, p) => { const s = trParam(intent, p); return s?.enum?.length ? s.enum : s?.suggest?.length ? s.suggest : null; };
+const trLabel = (v, map = TR_LABEL) => map[v] || map[String(v).toLowerCase()] || map[String(v).toUpperCase()] || v;
+function fillSelect(sel, values, labelMap, keep, blank) {
+  const prev = keep ?? sel.value;
+  sel.innerHTML = (blank ? `<option value="">${blank}</option>` : '') + values.map(v => `<option value="${esc(v)}">${esc(trLabel(v, labelMap))}</option>`).join('');
+  if (values.map(String).includes(String(prev))) sel.value = prev;
+}
+function kwOptions(groups, prev, own = true) {
+  return groups.map(([g, list]) => `<optgroup label="${esc(g)}">${list.map(k => `<option ${k === prev ? 'selected' : ''}>${esc(k)}</option>`).join('')}</optgroup>`).join('')
+    + (own ? `<option value="${OWN}" ${prev === OWN ? 'selected' : ''}>Kendim yazacağım…</option>` : '');
+}
+async function loadTrendSchema(force) {
+  if (trSchema && !force) return;
+  if (!trSchemaLoading) trSchemaLoading = api('/api/trends/schema' + (force ? '?refresh=1' : '')).then(s => { trSchema = s; $('#trSchemaNote').style.display = 'none'; })
+    .catch(e => { trSchema = []; $('#trSchemaNote').textContent = 'Servisin seçenek listesi okunamadı, varsayılan liste kullanılıyor (' + e.message + ').'; $('#trSchemaNote').style.display = ''; })
+    .finally(() => { trSchemaLoading = null; });
+  await trSchemaLoading;
+  trFillOptions(); trUpdate(); loadTrendUsage(); loadWatch();
+}
+function trFillOptions() {
+  // Ücretsiz plan son 90 günü kapsıyor: 3 aydan uzun dönemler sona, "ücretli plan" notuyla
+  const all = trValues('get_growth', 'percent_growth') || FALLBACK.percent_growth;
+  const long = w => /^(6M|9M|12M|1Y|18M|24M|2Y|36M|3Y|48M|4Y|60M|5Y|YTD|ALL)$/i.test(w);
+  const win = [...all.filter(w => !long(w)), ...all.filter(long)];
+  const combo = ['1M', '3M'].filter(w => win.includes(w));
+  const wopts = (combo.length >= 2 ? [combo.join(',')] : []).concat(win);
+  const wl = { ...WIN_LABEL, [combo.join(',')]: 'Son 1 ay ve 3 ay (karşılaştırmalı)' };
+  for (const w of win) if (long(w)) wl[w] = trLabel(w, WIN_LABEL) + ' (ücretli plan)';
+  fillSelect($('#trWindow'), wopts, wl);
+  // canlı listeler: markayla ilgili olanlar, servisin listesindeki sırayla
+  const feeds = trValues('get_top_trends', 'type');
+  fillSelect($('#trFeed'), feeds ? FALLBACK.type.filter(f => feeds.includes(f)).concat(feeds.filter(f => !FALLBACK.type.includes(f))) : FALLBACK.type, FEED_LABEL);
+  fillSelect($('#trCountry'), Object.keys(COUNTRY_LABEL), COUNTRY_LABEL, $('#trCountry').value || 'CA');
+  // takip listesi kaynakları
+  const srcs = (trValues('get_growth', 'source') || FALLBACK.source).filter(s => RELEVANT_SOURCES.includes(s));
+  fillSelect($('#wSource'), srcs.length ? srcs : FALLBACK.source, TR_LABEL, $('#wSource').value || 'google search');
+  $('#wKeyword').innerHTML = kwOptions(TREND_KW_GROUPS, $('#wKeyword').value || 'dash cam Canada');
+}
 function trUpdate() {
-  const mode = $('#trMode').value, src = $('#trSource').value;
+  const mode = $('#trMode').value, intent = MODE_INTENT[mode];
   $('#trTopicBox').style.display = mode === 'top' ? 'none' : '';
   $('#trWindowBox').style.display = mode === 'growth' ? '' : 'none';
   $('#trFeedBox').style.display = mode === 'top' ? '' : 'none';
-  const list = src === 'reddit' ? TREND_SUBREDDITS : src === 'tiktok' ? TREND_TIKTOK : TREND_TOPICS;
-  const prev = $('#trKeyword').value;
-  $('#trKeyword').innerHTML = list.map(k => `<option ${k === prev ? 'selected' : ''}>${esc(k)}</option>`).join('') + `<option value="${OWN}" ${prev === OWN ? 'selected' : ''}>Kendim yazacağım…</option>`;
-  $('#trKeywordCustom').style.display = $('#trKeyword').value === OWN ? '' : 'none';
-}
-$('#trSource').innerHTML = TREND_SOURCES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
-['#trMode', '#trSource', '#trKeyword'].forEach(s => $(s).addEventListener('change', trUpdate));
-trUpdate();
-$('#trRun').onclick = () => busy($('#trRun'), async () => {
-  const mode = $('#trMode').value;
-  let tool, args;
-  if (mode === 'top') { tool = 'get_top_trends'; args = { type: $('#trFeed').value, limit: 20 }; }
-  else {
-    const keyword = ($('#trKeyword').value === OWN ? $('#trKeywordCustom').value : $('#trKeyword').value).trim();
-    if (!keyword) throw new Error('Bir konu seç ya da yaz');
-    args = { keyword, source: $('#trSource').value };
-    if (mode === 'growth') { tool = 'get_growth'; args.percent_growth = $('#trWindow').value.split(','); }
-    else tool = 'get_time_series';
+  $('#trLimitBox').style.display = mode === 'posts' || mode === 'top' ? '' : 'none';
+  $('#trGeoNote').style.display = mode === 'growth' || mode === 'series' ? '' : 'none';
+  $('#trKwLabel').textContent = mode === 'posts' ? 'Hashtag' : 'Konu';
+  if (mode === 'posts') {
+    fillSelect($('#trSource'), trValues('get_top_posts', 'source') || FALLBACK.postSource, TR_LABEL);
+    const prev = $('#trKeyword').dataset.mode === 'posts' ? $('#trKeyword').value : 'dashcam';
+    $('#trKeyword').innerHTML = HASHTAG_GROUPS.map(([g, list]) => `<optgroup label="${esc(g)}">${list.map(k => `<option value="${esc(k)}" ${k === prev ? 'selected' : ''}>#${esc(k)}</option>`).join('')}</optgroup>`).join('')
+      + `<option value="${OWN}" ${prev === OWN ? 'selected' : ''}>Kendim yazacağım…</option>`;
+  } else if (mode !== 'top') {
+    const srcs = (trValues(intent, 'source') || FALLBACK.source).filter(s => RELEVANT_SOURCES.includes(s));
+    fillSelect($('#trSource'), srcs.length ? srcs : FALLBACK.source, TR_LABEL);
+    const prev = $('#trKeyword').dataset.mode !== 'posts' && $('#trKeyword').value ? $('#trKeyword').value : 'dash cam Canada';
+    $('#trKeyword').innerHTML = kwOptions(TREND_KW_GROUPS, prev);
   }
-  trLast = await api('/api/trends/call', { method: 'POST', body: { tool, args } });
-  showTrend(trLast); loadTrendHistory();
+  $('#trKeyword').dataset.mode = mode === 'posts' ? 'posts' : 'kw';
+  $('#trKeywordCustom').style.display = $('#trKeyword').value === OWN ? '' : 'none';
+  $('#trKeywordCustom').placeholder = mode === 'posts' ? 'Hashtag yaz (# olmadan)' : 'Kendi konunu yaz (İngilizce)';
+  // canlı liste seçenekleri
+  const feed = $('#trFeed').value;
+  const hasCountry = COUNTRY_FEEDS.includes(feed);
+  $('#trCountryBox').style.display = hasCountry ? '' : 'none';
+  $('#trCountryNote').style.display = mode === 'top' && !hasCountry ? '' : 'none';
+  $('#trTWindowBox').style.display = $('#trSort').value === 'rank_change' ? '' : 'none';
+  $('#trCategoryBox').style.display = /by Category|Top Websites/.test(feed) ? '' : 'none';
+}
+['#trMode', '#trSource', '#trKeyword', '#trFeed', '#trSort'].forEach(s => $(s).addEventListener('change', trUpdate));
+async function loadTrendUsage(u) {
+  try { u = u || await api('/api/trends/usage'); } catch { return; }
+  state.trUsage = u;
+  $('#trUsage').textContent = `Bu ay ${u.count}${u.limit ? ' / ' + u.limit : ''} istek kullanıldı. Aynı sorgu 24 saat içinde tekrar istenirse kota harcamadan geçmişten gelir.`;
+  renderWatchInfo();
+}
+function trBuildRequest() {
+  const mode = $('#trMode').value;
+  if (mode === 'top') {
+    const feed = $('#trFeed').value, args = { type: feed, limit: Number($('#trLimit').value) };
+    if (COUNTRY_FEEDS.includes(feed) && $('#trCountry').value) args.country = $('#trCountry').value;
+    if ($('#trSort').value) { args.sort = $('#trSort').value; args.window = $('#trTWindow').value; }
+    if (/by Category|Top Websites/.test(feed) && $('#trCategory').value.trim()) args.category = $('#trCategory').value.trim();
+    return { tool: 'get_top_trends', args };
+  }
+  let keyword = ($('#trKeyword').value === OWN ? $('#trKeywordCustom').value : $('#trKeyword').value).trim();
+  if (!keyword) throw new Error(mode === 'posts' ? 'Bir hashtag seç ya da yaz' : 'Bir konu seç ya da yaz');
+  if (mode === 'posts') keyword = keyword.replace(/^#/, '').replace(/\s+/g, '');
+  const args = { keyword, source: $('#trSource').value };
+  if (mode === 'growth') return { tool: 'get_growth', args: { ...args, percent_growth: $('#trWindow').value.split(',') } };
+  if (mode === 'posts') return { tool: 'get_top_posts', args: { ...args, limit: Math.min(20, Number($('#trLimit').value)) } };
+  return { tool: 'get_time_series', args };
+}
+async function trRunRequest(req, force) {
+  const r = await api('/api/trends/call', { method: 'POST', body: { ...req, force: !!force } });
+  trLastReq = req; showTrend(r);
+  $('#trRefresh').style.display = r.cached ? '' : 'none';
+  if (r.cached) toast('Bu sorgu son 24 saatte yapılmış; geçmişten gösteriliyor (kota harcanmadı).');
+  if (r.usage) loadTrendUsage(r.usage);
+  loadTrendHistory();
+}
+$('#trRun').onclick = () => busy($('#trRun'), async () => { await loadTrendSchema(); await trRunRequest(trBuildRequest()); });
+$('#trRefresh').onclick = () => busy($('#trRefresh'), async () => { if (trLastReq) await trRunRequest(trLastReq, true); });
+$$('[data-quick]').forEach(b => b.onclick = () => busy(b, async () => {
+  await loadTrendSchema();
+  await trRunRequest({ tool: 'get_top_trends', args: { type: b.dataset.quick, limit: 25, country: 'CA' } });
+  $('#trView').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}));
+
+// --- Kanada takip listesi
+let watch = { items: [], last: null };
+const wKey = x => `${x.keyword}|${x.source}`;
+async function loadWatch() {
+  try { watch = await api('/api/trends/watch'); } catch (e) { $('#wTable').innerHTML = `<p class="small" style="color:var(--err)">${esc(e.message)}</p>`; return; }
+  renderWatch();
+}
+function renderWatchInfo() {
+  const n = watch.items?.length || 0, u = state.trUsage;
+  const last = watch.last?.at ? `Son kontrol: ${new Date(watch.last.at).toLocaleString('tr-TR')}. ` : 'Henüz kontrol edilmedi. ';
+  $('#wInfo').textContent = `${n} kelime takipte. ${last}"Hepsini kontrol et" en fazla ${n} istek harcar; son 24 saatte kontrol edilenler ücretsiz gelir.${u ? ` Bu ay ${u.count}${u.limit ? ' / ' + u.limit : ''} istek kullanıldı.` : ''}`;
+  $('#wRun').textContent = `Hepsini kontrol et (${n})`;
+}
+function trendWord(p1, p3) {
+  if (p1 == null && p3 == null) return ['—', 'muted'];
+  if ((p1 ?? 0) > 5 && (p3 ?? 0) > 5) return ['Yükseliyor ↑', 'ok'];
+  if ((p1 ?? 0) < -5 && (p3 ?? 0) < -5) return ['Düşüyor ↓', 'err'];
+  if (p1 != null && p3 != null && p1 > p3 + 10) return ['Toparlanıyor ↗', 'ok'];
+  if (p1 != null && p3 != null && p1 < p3 - 10) return ['Yavaşlıyor ↘', 'warn'];
+  return ['Yatay →', 'muted'];
+}
+function renderWatch() {
+  renderWatchInfo();
+  const rows = (watch.items || []).map(it => {
+    const r = (watch.last?.rows || []).find(x => wKey(x) === wKey(it));
+    const g1 = r?.periods?.['1M']?.growth ?? null, g3 = r?.periods?.['3M']?.growth ?? null;
+    return { ...it, r, g1, g3 };
+  }).sort((a, b) => (b.g1 ?? -1e9) - (a.g1 ?? -1e9));
+  const cell = v => v == null ? '<span class="muted">—</span>' : `<b style="color:${v >= 0 ? 'var(--ok)' : 'var(--err)'}">${pctTxt(v)}</b>`;
+  $('#wTable').innerHTML = rows.length ? `<div class="wt"><div class="wh">Konu</div><div class="wh">Kaynak</div><div class="wh">Son 1 ay</div><div class="wh">Son 3 ay</div><div class="wh">Yorum</div><div class="wh"></div>
+    ${rows.map(x => {
+      const [word, cls] = x.r && !x.r.ok ? ['Hata', 'err'] : trendWord(x.g1, x.g3);
+      return `<div><a href="#" data-w-open="${esc(wKey(x))}">${esc(x.keyword)}</a>${x.r && !x.r.ok ? `<div class="small" style="color:var(--err)">${esc(x.r.error)}</div>` : ''}</div>
+        <div class="small muted">${esc(trLabel(x.source))}</div><div>${cell(x.g1)}</div><div>${cell(x.g3)}</div>
+        <div class="small" style="color:var(--${cls === 'muted' ? 'muted' : cls})">${word}</div>
+        <div><button class="btn sm" data-w-del="${esc(wKey(x))}" title="Listeden çıkar">✕</button></div>`;
+    }).join('')}</div>
+    <p class="small muted">İlgi puanları dünya geneli aramalardan gelir; yerel kelimeler (ICBC, BC, Vancouver) Kanada'daki ilgiyi daha iyi yansıtır. Bir kelimeye tıklayınca ayrıntısı açılır (geçmişten, ücretsiz).</p>`
+    : '<div class="empty">Takip listesi boş. Yukarıdan kelime ekle ya da önerilen listeyi yükle.</div>';
+  $$('[data-w-del]').forEach(b => b.onclick = () => saveWatch(watch.items.filter(x => wKey(x) !== b.dataset.wDel)));
+  $$('[data-w-open]').forEach(a => a.onclick = e => {
+    e.preventDefault();
+    const it = watch.items.find(x => wKey(x) === a.dataset.wOpen);
+    busy($('#trRun'), () => trRunRequest({ tool: 'get_growth', args: { keyword: it.keyword, source: it.source, percent_growth: ['1M', '3M'] } }).then(() => $('#trView').scrollIntoView({ behavior: 'smooth' })));
+  });
+}
+async function saveWatch(items, reset) {
+  try { const r = await api('/api/trends/watch', { method: 'PUT', body: reset ? { reset: true } : { items } }); watch.items = r.items; renderWatch(); }
+  catch (e) { toast(e.message, true); }
+}
+$('#wKeyword').onchange = () => { $('#wCustom').style.display = $('#wKeyword').value === OWN ? '' : 'none'; };
+$('#wAdd').onclick = () => {
+  const keyword = ($('#wKeyword').value === OWN ? $('#wCustom').value : $('#wKeyword').value).trim();
+  if (!keyword) return toast('Bir kelime seç ya da yaz', true);
+  const it = { keyword, source: $('#wSource').value };
+  if (watch.items.some(x => wKey(x) === wKey(it))) return toast('Bu kelime zaten listede');
+  saveWatch([...watch.items, it]); $('#wCustom').value = ''; toast(`"${keyword}" takibe alındı`);
+};
+$('#wReset').onclick = () => { if (confirm('Önerilen Kanada listesi yüklensin mi? Mevcut liste değişir.')) saveWatch(null, true); };
+$('#wRun').onclick = () => busy($('#wRun'), async () => {
+  const n = watch.items.length;
+  if (!n) throw new Error('Takip listesi boş');
+  if (!confirm(`${n} kelime kontrol edilecek. Son 24 saatte bakılmayanlar için toplam en fazla ${n} istek harcanır. Devam edilsin mi?`)) return;
+  const r = await api('/api/trends/watch/run', { method: 'POST', body: {} });
+  watch.last = { at: r.at, rows: r.rows }; renderWatch(); if (r.usage) loadTrendUsage(r.usage); loadTrendHistory();
+  toast(`${r.used} yeni istek, ${r.cached} sonuç geçmişten geldi`);
 });
 
-// sonucu okunur hale getir: grafik, büyüme kartları ya da sıralı liste
+// sonucu okunur hale getir: özet cümle + yorum + kartlar / grafik / liste. Ham JSON yalnızca "Ham veri"de.
 const parseJ = t => { try { return JSON.parse(t); } catch { return null; } };
+// Servis cevabı zarf içinde gelebiliyor: {"statusCode":200,"body":"{...}"} → içteki veriyi aç
+function unwrapTrend(text) {
+  let d = parseJ(text);
+  if (d === null && typeof text === 'string') { for (const part of text.split('\n')) { const p = parseJ(part); if (p) { d = p; break; } } }
+  for (let i = 0; i < 4 && d && typeof d === 'object' && !Array.isArray(d); i++) {
+    if (typeof d.body === 'string') { const p = parseJ(d.body); if (p !== null) { d = p; continue; } }
+    else if (d.body && typeof d.body === 'object') { d = d.body; continue; }
+    if (typeof d.text === 'string' && Object.keys(d).length <= 2) { const p = parseJ(d.text); if (p !== null) { d = p; continue; } }
+    break;
+  }
+  return d;
+}
 function walk(o, fn, key = '') { fn(o, key); if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) walk(v, fn, k); }
+const shortDate = s => { const d = new Date(String(s).slice(0, 10) + 'T12:00:00'); return isNaN(d) ? String(s) : d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined }); };
+const pctTxt = v => `${v > 0 ? '+' : v < 0 ? '−' : ''}%${Math.abs(Math.round(v * 10) / 10).toLocaleString('tr-TR')}`;
+const nfmt = n => n >= 1e6 ? (n / 1e6).toLocaleString('tr-TR', { maximumFractionDigits: 1 }) + ' mn' : n >= 1e3 ? (n / 1e3).toLocaleString('tr-TR', { maximumFractionDigits: 1 }) + ' bin' : (Math.round(n * 10) / 10).toLocaleString('tr-TR');
+const winTxt = w => trLabel(w, WIN_LABEL).replace(/^Son /, 'son ');
+const ERR_TR = { date_out_of_range: 'Ücretsiz plan yalnızca son 90 günün verisini veriyor; bu dönem için plan yükseltmek gerekiyor.', no_data: 'Bu dönem için veri yok.', insufficient_data: 'Hesaplamak için yeterli veri yok.' };
+function noteTr(note) {
+  if (!note) return '';
+  if (/90 days/i.test(note)) return 'Ücretsiz plan son 90 günlük veriyi kapsıyor. 6 ve 12 aylık karşılaştırmalar için TrendsMCP planını yükseltmek gerekiyor.';
+  return note;
+}
 function seriesOf(data) {
   let best = null;
   walk(data, (v) => {
     if (!Array.isArray(v) || v.length < 3 || typeof v[0] !== 'object' || !v[0]) return;
     const keys = Object.keys(v[0]);
     const dk = keys.find(k => /date|time|week|period|day|month/i.test(k));
-    const vk = keys.find(k => k !== dk && typeof v[0][k] === 'number');
+    const vk = keys.find(k => k !== dk && /value|interest|score|index|volume|count/i.test(k) && typeof v[0][k] === 'number') || keys.find(k => k !== dk && typeof v[0][k] === 'number');
     if (dk && vk && (!best || v.length > best.pts.length)) best = { pts: v.map(p => [String(p[dk]).slice(0, 10), Number(p[vk])]).filter(p => isFinite(p[1])), vk };
   });
   return best;
 }
-function growthOf(data) {
-  const named = [], loose = [];
-  walk(data, (v, k) => {
-    if (typeof v === 'number' && /growth|change|percent|pct/i.test(k)) loose.push([k, v]);
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      const name = v.name || v.window || v.period || v.label, val = [v.growth, v.percent_growth, v.percent, v.change, v.value].find(x => typeof x === 'number');
-      if (name && typeof val === 'number') named.push([String(name), val]);
-    }
-  });
-  const out = named.length ? named : loose;
-  const seen = new Set(); return out.filter(([k]) => !seen.has(k) && seen.add(k));
-}
-function listOf(data) {
+const METRIC_KEYS = [['score', 'puan'], ['upvotes', 'oy'], ['ups', 'oy'], ['views', 'izlenme'], ['view_count', 'izlenme'], ['plays', 'oynatma'], ['likes', 'beğeni'], ['like_count', 'beğeni'], ['comments', 'yorum'], ['num_comments', 'yorum'], ['comment_count', 'yorum'], ['shares', 'paylaşım'], ['engagement', 'etkileşim'], ['volume', 'arama hacmi'], ['search_volume', 'arama hacmi'], ['traffic', 'trafik'], ['growth', 'büyüme %'], ['rank', 'sıra']];
+function itemsOf(data) {
   let best = null;
-  walk(data, (v) => { if (Array.isArray(v) && v.length >= 3 && (!best || v.length > best.length)) best = v; });
-  return (best || []).map(x => typeof x === 'string' ? x : x && (x.title || x.name || x.keyword || x.query || x.hashtag || x.term || x.topic || JSON.stringify(x).slice(0, 80)));
+  walk(data, (v) => { if (Array.isArray(v) && v.length >= 1 && (!best || v.length > best.length) && v.some(x => typeof x === 'string' || (x && typeof x === 'object'))) best = v; });
+  return (best || []).map(x => {
+    if (typeof x === 'string') return { title: x };
+    if (!x || typeof x !== 'object') return null;
+    const title = x.title || x.name || x.keyword || x.query || x.hashtag || x.term || x.topic || x.search_term || x.text || x.caption || x.description;
+    if (!title) return null;
+    const url = [x.url, x.link, x.permalink, x.post_url, x.video_url, x.share_url].find(u => typeof u === 'string' && /^https?:\/\//.test(u));
+    const metrics = []; const seen = new Set();
+    for (const [k, l] of METRIC_KEYS) if (typeof x[k] === 'number' && !seen.has(l)) { seen.add(l); metrics.push(k === 'growth' ? `${pctTxt(x[k])} büyüme` : k === 'rank' ? `${x[k]}. sıra` : `${nfmt(x[k])} ${l}`); }
+    const by = x.author || x.channel || x.channel_title || (x.subreddit ? 'r/' + String(x.subreddit).replace(/^r\//, '') : '') || x.username || x.creator || '';
+    const when = x.created_at || x.published_at || x.date || '';
+    return { title: String(title).slice(0, 200), url, meta: [typeof by === 'string' ? by : '', ...metrics, when ? shortDate(when) : ''].filter(Boolean).join(' · ') };
+  }).filter(Boolean);
 }
 function sparkline(pts) {
   const W = 520, H = 160, vals = pts.map(p => p[1]), max = Math.max(...vals), min = Math.min(...vals), rng = max - min || 1;
@@ -482,44 +686,114 @@ function sparkline(pts) {
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img" aria-label="İlgi grafiği">
     <polyline fill="none" stroke="var(--accent)" stroke-width="2" points="${xy.map(p => p.map(n => n.toFixed(1)).join(',')).join(' ')}"/>
     <circle cx="${xy.at(-1)[0]}" cy="${xy.at(-1)[1]}" r="4" fill="var(--accent)"/>
-    <text x="10" y="${H - 4}" fill="var(--muted)" font-size="11">${esc(pts[0][0])}</text>
-    <text x="${W - 10}" y="${H - 4}" fill="var(--muted)" font-size="11" text-anchor="end">${esc(pts.at(-1)[0])}</text></svg>`;
+    <text x="10" y="${H - 4}" fill="var(--muted)" font-size="11">${esc(shortDate(pts[0][0]))}</text>
+    <text x="${W - 10}" y="${H - 4}" fill="var(--muted)" font-size="11" text-anchor="end">${esc(shortDate(pts.at(-1)[0]))}</text></svg>`;
+}
+const box = (title, body) => `<div class="tr-sum"><b>${title}</b><div>${body}</div></div>`;
+function renderGrowth(d, a) {
+  const rows = Array.isArray(d?.results) ? d.results : [];
+  if (!rows.length) return '';
+  const kw = d.search_term || a.keyword, src = trLabel(d.data_source || a.source);
+  const ok = rows.filter(r => r.status !== 'error' && typeof r.growth === 'number');
+  let html = '';
+  if (ok.length) {
+    const parts = ok.map(r => `${winTxt(r.period)} ${pctTxt(r.growth)}`);
+    const dir = ok.every(r => r.growth > 0) ? 'yükselişte' : ok.every(r => r.growth < 0) ? 'düşüşte' : 'karışık seyrediyor';
+    html += box('Özet', `“${esc(kw)}” için ${esc(src)} ilgisi ${dir}: ${esc(parts.join(', '))}.`);
+    const s = ok.find(r => r.period === '1M') || ok[0], l = ok.find(r => r.period !== s.period);
+    let mean;
+    if (l && s.growth > 5 && l.growth > 5) mean = 'İlgi hem kısa hem uzun vadede artıyor. Bu konu şu an içerik için iyi bir zamanlama.';
+    else if (l && s.growth < -5 && l.growth < -5) mean = 'İlgi bir süredir azalıyor. Bu konuyu öne çıkarmak yerine yükselen başka bir konuya ağırlık vermek daha verimli olabilir.';
+    else if (l && s.growth > l.growth) mean = 'Uzun vadede zayıf ama son dönemde toparlanıyor. Takipte tutulacak bir konu.';
+    else if (l) mean = 'Uzun vadeye göre son dönemde ivme kaybediyor.';
+    else mean = s.growth > 5 ? 'Son dönemde ilgi artıyor.' : s.growth < -5 ? 'Son dönemde ilgi azalıyor.' : 'İlgi yatay seyrediyor.';
+    html += box('Ne anlama geliyor?', esc(mean));
+  }
+  html += `<div class="tr-cards">${rows.map(r => {
+    if (r.status === 'error' || typeof r.growth !== 'number') return `<div class="tr-card off"><span class="muted">${esc(trLabel(r.period, WIN_LABEL))}</span><b class="muted">Veri yok</b><span class="small muted">${esc(ERR_TR[r.error] || r.message || 'Hesaplanamadı')}</span></div>`;
+    const vol = typeof r.recent_volume === 'number' ? `<span class="small muted">Tahmini aylık arama: ${typeof r.baseline_volume === 'number' ? nfmt(r.baseline_volume) + ' → ' : ''}${nfmt(r.recent_volume)}${r.volume_estimated ? ' (tahmini)' : ''}</span>` : '';
+    return `<div class="tr-card"><span class="muted">${esc(trLabel(r.period, WIN_LABEL))}</span><b style="color:${r.growth >= 0 ? 'var(--ok)' : 'var(--err)'}">${pctTxt(r.growth)}</b>
+      <span class="small">${r.growth >= 0 ? 'Artış' : 'Azalış'}</span>
+      ${typeof r.baseline_value === 'number' ? `<span class="small muted">İlgi puanı ${nfmt(r.baseline_value)} → ${nfmt(r.recent_value)}<br>${esc(shortDate(r.baseline_date))} → ${esc(shortDate(r.recent_date))}</span>` : ''}${vol}</div>`;
+  }).join('')}</div>`;
+  const notes = [noteTr(d.note), ok.some(r => typeof r.baseline_value === 'number') ? 'İlgi puanı 0–100 arası göreli bir değerdir; 100, dönemdeki en yüksek ilgiyi gösterir. Mutlak arama sayısı değildir.' : ''].filter(Boolean);
+  if (notes.length) html += `<p class="small muted">${notes.map(esc).join('<br>')}</p>`;
+  return html;
+}
+function renderSeries(d, a) {
+  const s = seriesOf(d);
+  if (!s || s.pts.length < 3) return '';
+  const first = s.pts[0][1], last = s.pts.at(-1)[1], peak = s.pts.reduce((x, y) => y[1] > x[1] ? y : x), low = s.pts.reduce((x, y) => y[1] < x[1] ? y : x);
+  const ch = first ? (last - first) / first * 100 : null;
+  const kw = d.search_term || a.keyword, src = trLabel(d.data_source || a.source);
+  let html = box('Özet', `“${esc(kw)}” için ${esc(src)} ilgisi ${esc(shortDate(s.pts[0][0]))} – ${esc(shortDate(s.pts.at(-1)[0]))} arasında ${ch === null ? 'izlendi' : ch >= 0 ? `${pctTxt(ch)} arttı` : `${pctTxt(ch)} azaldı`}. En yüksek ilgi ${esc(shortDate(peak[0]))} tarihindeydi.`);
+  html += sparkline(s.pts);
+  html += `<div class="stats"><div class="stat"><b>${nfmt(last)}</b><span class="muted">son değer</span></div><div class="stat"><b>${nfmt(peak[1])}</b><span class="muted">en yüksek (${esc(shortDate(peak[0]))})</span></div><div class="stat"><b>${nfmt(low[1])}</b><span class="muted">en düşük (${esc(shortDate(low[0]))})</span></div>${ch === null ? '' : `<div class="stat"><b style="color:${ch >= 0 ? 'var(--ok)' : 'var(--err)'}">${pctTxt(ch)}</b><span class="muted">dönem başına göre</span></div>`}</div>`;
+  if (d.note) html += `<p class="small muted">${esc(noteTr(d.note))}</p>`;
+  return html;
+}
+function renderTrendList(d, a, kind) {
+  const l = itemsOf(d);
+  if (!l.length) return '';
+  const rel = x => kind !== 'posts' && RELEVANT.test(x.title);
+  const nRel = l.filter(rel).length;
+  const where = `${esc(trLabel(a.type, FEED_LABEL) || 'Liste')}${a.country ? ' · ' + esc(trLabel(a.country, COUNTRY_LABEL)) : a.type && !COUNTRY_FEEDS.includes(a.type) ? '' : ' · ABD'}`;
+  const head = kind === 'posts' ? `#${esc(String(a.keyword).replace(/^#/, ''))} hashtag'inde ${esc(trLabel(a.source))} üzerinde en çok etkileşim alan ${l.length} paylaşım. Başlığa tıklayınca orijinali açılır; formatlarına ve ilk cümlelerine bak.`
+    : `${where}: şu an öne çıkan ${l.length} konu.${nRel ? ` Bunlardan <b>${nRel}</b> tanesi markayla ilgili görünüyor (araç, sürüş, yol, hava, Vancouver/BC) ve işaretlendi.` : ' Bu listede markayla doğrudan ilgili konu görünmüyor.'}`;
+  return box('Özet', head) + `<ol class="stack" style="padding-left:20px;margin:0">${l.slice(0, 50).map(x => `<li>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title)}${rel(x) ? ' <span class="relb">markayla ilgili</span>' : ''}${x.meta ? `<div class="small muted">${esc(x.meta)}</div>` : ''}</li>`).join('')}</ol>` + (d?.note ? `<p class="small muted">${esc(noteTr(d.note))}</p>` : '');
+}
+// bilinmeyen biçim: JSON yerine okunur alan listesi
+const KEY_TR = { search_term: 'Konu', keyword: 'Konu', data_source: 'Kaynak', source: 'Kaynak', period: 'Dönem', growth: 'Değişim', direction: 'Yön', recent_value: 'Son değer', baseline_value: 'Başlangıç değeri', recent_date: 'Son tarih', baseline_date: 'Başlangıç tarihi', note: 'Not', message: 'Mesaj', status: 'Durum', country: 'Ülke', type: 'Liste', total: 'Toplam', count: 'Adet' };
+function renderGeneric(d) {
+  if (!d || typeof d !== 'object') return '';
+  const rows = [];
+  for (const [k, v] of Object.entries(d)) {
+    if (['metadata', 'meta', 'statusCode'].includes(k)) continue;
+    if (v === null || typeof v === 'object') continue;
+    rows.push(`<div class="muted">${esc(KEY_TR[k] || k.replace(/_/g, ' '))}</div><div>${esc(k === 'note' ? noteTr(v) : typeof v === 'number' ? nfmt(v) : v)}</div>`);
+  }
+  const list = itemsOf(d);
+  return (rows.length ? `<div class="svc">${rows.join('')}</div>` : '') + (list.length ? `<ol class="stack" style="padding-left:20px;margin:8px 0 0">${list.slice(0, 30).map(x => `<li>${esc(x.title)}${x.meta ? `<div class="small muted">${esc(x.meta)}</div>` : ''}</li>`).join('')}</ol>` : '');
 }
 function showTrend(t) {
   trLast = t; $('#trSave').disabled = false;
-  const data = parseJ(t.text);
-  $('#trResult').textContent = data ? JSON.stringify(data, null, 2) : (t.text || '(boş sonuç)');
-  const title = `<p class="small muted">${esc(t.args.keyword || t.args.type || '')}${t.args.source ? ' · ' + esc(t.args.source) : ''} · ${new Date(t.createdAt).toLocaleString('tr-TR')}</p>`;
+  const data = unwrapTrend(t.text);
+  $('#trResult').textContent = data && typeof data === 'object' ? JSON.stringify(data, null, 2) : (t.text || '(boş sonuç)');
+  const a = t.args || {};
+  const title = `<p class="small muted">${esc(TOOL_TR[t.tool] || t.tool)} · ${esc(t.tool === 'get_top_posts' ? '#' + String(a.keyword).replace(/^#/, '') : a.keyword || trLabel(a.type, FEED_LABEL) || '')}${a.source ? ' · ' + esc(trLabel(a.source)) : ''}${a.country ? ' · ' + esc(trLabel(a.country, COUNTRY_LABEL)) : ''} · ${new Date(t.createdAt).toLocaleString('tr-TR')}${t.cached ? ' · <span style="color:var(--info)">geçmişten</span>' : ''}</p>`;
   let html = '';
-  if (data && t.tool === 'get_growth') {
-    const g = growthOf(data);
-    if (g.length) html = `<div class="stats">${g.map(([k, v]) => `<div class="stat"><b style="color:${v >= 0 ? 'var(--ok)' : 'var(--err)'}">${v >= 0 ? '+' : ''}${Math.round(v * 10) / 10}%</b><span class="muted">${esc(k)}</span></div>`).join('')}</div>`;
-  }
-  if (!html && data && t.tool === 'get_time_series') {
-    const s = seriesOf(data);
-    if (s && s.pts.length > 2) {
-      const first = s.pts[0][1], last = s.pts.at(-1)[1], peak = s.pts.reduce((a, b) => b[1] > a[1] ? b : a);
-      html = sparkline(s.pts) + `<div class="stats"><div class="stat"><b>${last}</b><span class="muted">son değer</span></div><div class="stat"><b>${peak[1]}</b><span class="muted">zirve (${esc(peak[0])})</span></div><div class="stat"><b style="color:${last >= first ? 'var(--ok)' : 'var(--err)'}">${first ? (last >= first ? '+' : '') + Math.round((last - first) / first * 100) + '%' : '—'}</b><span class="muted">dönem başına göre</span></div></div>`;
-    }
-  }
-  if (!html && data) {
-    const l = listOf(data).filter(Boolean);
-    if (l.length) html = `<ol class="stack" style="padding-left:20px;margin:0">${l.slice(0, 25).map(x => `<li>${esc(x)}</li>`).join('')}</ol>`;
-  }
-  $('#trView').innerHTML = title + (html || `<p class="muted">Sonuç geldi ama otomatik gösterilemedi. "Ham veri"yi aç.</p>`);
+  if (data && typeof data === 'object') {
+    if (t.tool === 'get_growth') html = renderGrowth(data, a);
+    if (!html && t.tool === 'get_time_series') html = renderSeries(data, a);
+    if (!html && (t.tool === 'get_top_posts' || t.tool === 'get_top_trends')) html = renderTrendList(data, a, t.tool === 'get_top_posts' ? 'posts' : 'top');
+    if (!html) html = renderSeries(data, a) || renderTrendList(data, a, 'top') || renderGeneric(data);
+  } else if (t.text) html = `<p>${esc(String(t.text).slice(0, 1200))}</p>`;
+  $('#trView').innerHTML = title + (html || `<p class="muted">Bu sonuçta gösterilecek veri yok. Başka bir konu ya da kaynak dene.</p>`);
 }
-$('#trSave').onclick = async () => {
+$('#trSave').onclick = () => busy($('#trSave'), async () => {
   if (!trLast) return;
-  const label = trLast.args.keyword ? `${trLast.args.keyword} (${trLast.args.source})` : trLast.args.type || trLast.tool;
-  const i = await api('/api/ideas', { method: 'POST', body: { title: `Trend: ${label}`, notes: $('#trView').innerText.slice(0, 600) } });
+  const a = trLast.args || {};
+  const label = a.keyword ? `${a.keyword} (${trLabel(a.source)})` : a.type || trLast.tool;
+  const summary = [...$$('#trView .tr-sum div')].map(e => e.innerText).join('\n') || $('#trView').innerText;
+  const i = await api('/api/ideas', { method: 'POST', body: { title: `Trend: ${label}`, notes: summary.slice(0, 600) } });
   state.ideas.unshift(i); renderIdeas(); toast('Fikir bankasına eklendi');
-};
-const TOOL_TR = { get_growth: 'Büyüme', get_time_series: 'Zaman içinde ilgi', get_top_trends: 'Canlı liste' };
+});
+const TOOL_TR = { get_growth: 'Büyüme', get_time_series: 'Zaman içinde ilgi', get_top_posts: 'Öne çıkan paylaşımlar', get_top_trends: 'Canlı liste' };
 async function loadTrendHistory() {
   const h = await api('/api/trends/history').catch(() => []);
-  $('#trHistory').innerHTML = h.length ? h.map(t => `<div class="card" data-id="${t.id}"><b>${esc(t.args.keyword || t.args.type || t.tool)}</b><div class="small muted">${esc(TOOL_TR[t.tool] || t.tool)}${t.args.source ? ' · ' + esc(t.args.source) : ''}</div><div class="small muted">${new Date(t.createdAt).toLocaleString('tr-TR')}</div><div class="actions"><button class="btn sm">Göster</button></div></div>`).join('') : '<div class="empty">Geçmiş yok.</div>';
-  $$('#trHistory .card button').forEach(b => b.onclick = () => showTrend(h.find(t => t.id === b.closest('.card').dataset.id)));
+  $('#trClear').style.display = h.length ? '' : 'none';
+  $('#trHistory').innerHTML = h.length ? h.map(t => `<div class="card" data-id="${t.id}"><b>${esc(t.args.keyword || t.args.type || t.tool)}</b><div class="small muted">${esc(TOOL_TR[t.tool] || t.tool)}${t.args.source ? ' · ' + esc(trLabel(t.args.source)) : ''}${t.args.country ? ' · ' + esc(trLabel(t.args.country, COUNTRY_LABEL)) : ''}</div><div class="small muted">${new Date(t.createdAt).toLocaleString('tr-TR')}</div><div class="actions"><button class="btn sm" data-a="show">Göster</button><button class="btn sm danger" data-a="del">Sil</button></div></div>`).join('') : '<div class="empty">Geçmiş yok.</div>';
+  $$('#trHistory .card').forEach(c => c.onclick = async e => {
+    const a = e.target.dataset.a; if (!a) return;
+    const t = h.find(x => x.id === c.dataset.id);
+    if (a === 'show') { showTrend(t); $('#trRefresh').style.display = 'none'; return window.scrollTo({ top: 0, behavior: 'smooth' }); }
+    try { await api(`/api/trends/history/${t.id}`, { method: 'DELETE' }); loadTrendHistory(); } catch (err) { toast(err.message, true); }
+  });
 }
+$('#trClear').onclick = async () => {
+  if (!confirm('Tüm trend geçmişi silinsin mi? (Kota sayacı etkilenmez.)')) return;
+  try { await api('/api/trends/history', { method: 'DELETE' }); loadTrendHistory(); toast('Geçmiş temizlendi'); } catch (e) { toast(e.message, true); }
+};
 
 // ============================================================ GÖRSEL + CANVA
 function renderCanvaBar() {
@@ -656,6 +930,7 @@ async function init() {
   $('#idPlatform').innerHTML = opts(PLATFORMS, '', 'Tüm platformlar');
   $('#calPlatform').innerHTML = opts(PLATFORMS, '', 'Tüm platformlar');
   try { if (localStorage.getItem('calView') === 'list') state.view = 'list'; } catch { }
+  trFillOptions(); trUpdate(); // servis listesi gelene kadar varsayılanlar
   presetSelect($('#genPreset'), GEN_PRESETS, $('#genBrief'));
   presetSelect($('#imgPreset'), IMG_PRESETS, $('#imgPrompt'));
   presetSelect($('#vidPreset'), VID_PRESETS, $('#vidPrompt'));
