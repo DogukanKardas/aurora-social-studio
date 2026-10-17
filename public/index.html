@@ -51,17 +51,21 @@
     <div class="grid2">
       <div class="panel stack">
         <h2>Fikir üret</h2>
-        <p class="muted small">Marka sesi ve içerik sütunları otomatik uygulanır. Üretilenler aşağıdaki fikir bankasına düşer.</p>
+        <p class="muted small">Marka sesi, içerik sütunları ve Vancouver/BC bağlamı isteğe otomatik eklenir. Gemini'nin cevabını yapıştırınca fikirler aşağıdaki bankaya düşer.</p>
         <label>Hazır konu</label>
         <select id="genPreset"></select>
         <label>Konu / yön (istersen düzenle)</label>
         <textarea id="genBrief" placeholder="Hazır konu seç ya da kendin yaz"></textarea>
+        <div id="genTrend" class="small" style="display:none"></div>
         <div class="row">
           <div style="flex:1"><label>Sütun</label><select id="genPillar"></select></div>
           <div style="flex:1"><label>Platform</label><select id="genPlatform"></select></div>
           <div style="width:90px"><label>Adet</label><input id="genCount" type="number" value="6" min="1" max="12"></div>
         </div>
-        <button class="btn primary" id="genBtn">Fikir üret</button>
+        <div class="row" style="gap:8px">
+          <button class="btn primary" id="gemPrep">Gemini için hazırla</button>
+          <button class="btn" id="genBtn" style="display:none">Claude ile üret (API)</button>
+        </div>
       </div>
       <div class="panel stack">
         <h2>Elle ekle</h2>
@@ -74,6 +78,22 @@
         <label>Caption</label><textarea id="manCaption"></textarea>
         <button class="btn" id="manBtn">Bankaya ekle</button>
       </div>
+    </div>
+    <div class="panel stack" id="gemPanel" style="display:none;margin-top:20px">
+      <div class="row spread"><h2>Gemini ile fikir üret</h2><button class="btn sm" id="gemClose">Kapat</button></div>
+      <div class="grid2">
+        <div class="stack">
+          <b class="small">1. İsteği kopyala ve Gemini'ye yapıştır</b>
+          <textarea id="gemPrompt" rows="9" readonly class="small"></textarea>
+          <div class="row" style="gap:6px"><button class="btn primary sm" id="gemCopy">İsteği kopyala</button><a class="btn sm" href="https://gemini.google.com/app" target="_blank" rel="noopener">Gemini'yi aç ↗</a></div>
+        </div>
+        <div class="stack">
+          <b class="small">2. Gemini'nin cevabını buraya yapıştır</b>
+          <textarea id="gemPaste" rows="9" class="small" placeholder="Gemini'nin verdiği cevabın tamamını buraya yapıştır (köşeli parantezle başlayan liste)."></textarea>
+          <div class="row" style="gap:6px"><button class="btn primary sm" id="gemParse">Fikirleri ayıkla</button><span class="small muted" id="gemMsg"></span></div>
+        </div>
+      </div>
+      <div id="gemPreview" class="stack"></div>
     </div>
     <div class="row spread" style="margin:24px 0 12px"><h2>Fikir bankası</h2><span class="muted small" id="ideaCount"></span></div>
     <div class="row" style="margin-bottom:12px;gap:8px">
@@ -137,7 +157,7 @@
         <p class="small" id="trSchemaNote" style="color:var(--warn);display:none"></p>
       </div>
       <div class="panel stack">
-        <div class="row spread"><h2>Sonuç</h2><div class="row" style="gap:6px"><button class="btn sm" id="trRefresh" style="display:none">Yeniden sorgula (1 istek)</button><button class="btn sm" id="trSave" disabled>Fikir olarak kaydet</button></div></div>
+        <div class="row spread"><h2>Sonuç</h2><div class="row" style="gap:6px"><button class="btn sm" id="trRefresh" style="display:none">Yeniden sorgula (1 istek)</button><button class="btn sm" id="trIdea" disabled>Bu trendden fikir hazırla</button><button class="btn sm" id="trSave" disabled>Fikir olarak kaydet</button></div></div>
         <div id="trView"><p class="muted">Soldan seçimini yap ve "Göster"e bas.</p></div>
         <details><summary class="muted small">Ham veri</summary><pre class="result" id="trResult"></pre></details>
       </div>
@@ -269,6 +289,7 @@
     <div class="small muted" id="pmCount"></div>
     <div id="pmSuggestions" class="stack"></div>
     <label>Notlar (çekim, hazırlık)</label><textarea id="pmNotes" rows="2"></textarea>
+    <div id="pmImgBox" class="small" style="display:none"><label>Görsel tarifi (ChatGPT için)</label><div class="row" style="gap:6px;flex-wrap:nowrap;align-items:flex-start"><div class="muted" id="pmImgText" style="flex:1"></div><button class="btn sm" id="pmImgCopy">Kopyala</button></div></div>
     <div class="row spread"><label>Renk paleti (Canva tasarımı için)</label>
       <div class="row" style="gap:6px">
         <select id="pmPalMode" class="small" style="width:auto"><option value="brand">Marka renkleri sabit (siyah + krem)</option><option value="color">Seçtiğim renkten</option><option value="free">Tamamen yeni</option></select>
@@ -283,6 +304,24 @@
       <div class="row"><button class="btn danger" id="pmDelete">Sil</button><button class="btn" id="pmDup" title="Aynı içeriği bir hafta sonrasına kopyala">Çoğalt</button></div>
       <div class="row"><button class="btn" id="pmCopy">Caption'ı kopyala</button><button class="btn primary" id="pmSave">Kaydet</button></div>
     </div>
+  </div>
+</div>
+
+<!-- fikir düzenleyici -->
+<div class="modal" id="ideaModal">
+  <div class="box stack">
+    <div class="row spread"><h2>Fikri düzenle</h2><button class="btn sm" data-close>Kapat</button></div>
+    <label>Başlık</label><input id="imTitle">
+    <div class="row">
+      <div style="flex:1"><label>Sütun</label><select id="imPillar"></select></div>
+      <div style="flex:1"><label>Platform</label><select id="imPlatform"></select></div>
+      <div style="flex:1"><label>Format</label><select id="imFormat"></select></div>
+    </div>
+    <label>Caption</label><textarea id="imCaption" rows="5"></textarea>
+    <label>Hashtag'ler</label><input id="imHashtags" placeholder="#Vancouver #BCDrivers #DashCam">
+    <label>Çekim / hazırlık notu</label><textarea id="imNotes" rows="3"></textarea>
+    <label>Görsel tarifi (ChatGPT için, İngilizce)</label><textarea id="imImage" rows="3"></textarea>
+    <div class="row spread"><span></span><button class="btn primary" id="imSave">Kaydet</button></div>
   </div>
 </div>
 

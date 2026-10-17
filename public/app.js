@@ -225,6 +225,8 @@ function openPost(p) {
   $('#pmSuggestions').innerHTML = '';
   $('#pmDelete').style.visibility = p.id ? 'visible' : 'hidden';
   $('#pmDup').style.display = p.id ? '' : 'none';
+  $('#pmImgBox').style.display = p.imagePrompt ? '' : 'none'; $('#pmImgText').textContent = p.imagePrompt || '';
+  $('#pmSuggest').textContent = state.status.claude ? 'Caption öner' : 'Caption öner (Gemini)';
   renderPostMedia(); renderPalette(); updateCounter(); updateDayInfo();
   $('#postModal').classList.add('open');
 }
@@ -274,6 +276,7 @@ function readPost() {
     format: $('#pmFormat').value, pillar: $('#pmPillar').value, topic: $('#pmTopic').value.trim(),
     caption: $('#pmCaption').value, notes: $('#pmNotes').value, mediaIds: editing.mediaIds, palette: editing.palette || [],
     ...(editing.ideaId ? { ideaId: editing.ideaId } : {}),
+    ...(editing.imagePrompt ? { imagePrompt: editing.imagePrompt } : {}),
   };
 }
 $('#pmSave').onclick = () => busy($('#pmSave'), async () => {
@@ -304,10 +307,34 @@ $('#pmDup').onclick = () => {
   openPost({ ...cur, ideaId: undefined, mediaIds: [...cur.mediaIds], date: addDays(cur.date || ymd(new Date()), 7), status: 'Taslak', dupOf: editing.id });
 };
 $('#pmCopy').onclick = () => copy($('#pmCaption').value);
+$('#pmImgCopy').onclick = async () => { await copy(imageAsk(editing.imagePrompt || '', $('#pmFormat').value)); toast('Görsel tarifi doğru oranla kopyalandı. ChatGPT\'ye yapıştır.'); };
+// caption önerisi: API anahtarı yoksa Gemini ile elle
+function parseCaptions(text) {
+  const t = String(text || '').replace(/```(?:json)?/gi, '').trim();
+  const o = t.indexOf('{'), c = t.lastIndexOf('}');
+  if (o >= 0 && c > o) { try { const j = JSON.parse(t.slice(o, c + 1)); if (Array.isArray(j.captions) && j.captions.length) return j.captions.map(String); } catch { } }
+  const a = t.indexOf('['), b = t.lastIndexOf(']');
+  if (a >= 0 && b > a) { try { const j = JSON.parse(t.slice(a, b + 1)); if (Array.isArray(j) && j.length) return j.map(String); } catch { } }
+  const parts = t.split(/\n\s*(?:-{3,}|\d+[.)]|Caption \d+:?)\s*|\n{2,}/i).map(x => x.trim()).filter(x => x.length > 20);
+  if (parts.length) return parts.slice(0, 5);
+  throw new Error('Cevapta caption bulunamadı. Gemini\'nin cevabının tamamını yapıştır.');
+}
+function showCaptionChoices(caps) {
+  $('#pmSuggestions').innerHTML = caps.map((c, i) => `<div class="card"><div class="cap">${esc(c)}</div><div class="actions"><button class="btn sm" data-i="${i}">Bunu kullan</button></div></div>`).join('');
+  $$('#pmSuggestions [data-i]').forEach(b => b.onclick = () => { $('#pmCaption').value = caps[b.dataset.i]; $('#pmSuggestions').innerHTML = ''; updateCounter(); });
+}
 $('#pmSuggest').onclick = () => busy($('#pmSuggest'), async () => {
-  const r = await api('/api/caption', { method: 'POST', body: { ...readPost(), tone: $('#pmTone').value } });
-  $('#pmSuggestions').innerHTML = (r.captions || []).map((c, i) => `<div class="card"><div class="cap">${esc(c)}</div><div class="actions"><button class="btn sm" data-i="${i}">Bunu kullan</button></div></div>`).join('');
-  $$('#pmSuggestions button').forEach(b => b.onclick = () => { $('#pmCaption').value = r.captions[b.dataset.i]; $('#pmSuggestions').innerHTML = ''; updateCounter(); });
+  if (state.status.claude) {
+    const r = await api('/api/caption', { method: 'POST', body: { ...readPost(), tone: $('#pmTone').value } });
+    return showCaptionChoices(r.captions || []);
+  }
+  const r = await api('/api/prompts/caption', { method: 'POST', body: { ...readPost(), tone: $('#pmTone').value } });
+  await copy(r.prompt);
+  $('#pmSuggestions').innerHTML = `<div class="card"><div class="small">İstek kopyalandı. <a href="https://gemini.google.com/app" target="_blank" rel="noopener">Gemini'yi aç ↗</a>, yapıştır ve cevabın tamamını aşağıya yapıştır.</div>
+    <textarea id="pmGemPaste" rows="4" class="small" placeholder="Gemini'nin cevabı"></textarea>
+    <div class="actions"><button class="btn sm primary" id="pmGemParse">Caption'ları ayıkla</button><button class="btn sm" id="pmGemAgain">İsteği tekrar kopyala</button></div></div>`;
+  $('#pmGemAgain').onclick = () => copy(r.prompt);
+  $('#pmGemParse').onclick = () => { try { showCaptionChoices(parseCaptions($('#pmGemPaste').value)); } catch (e) { toast(e.message, true); } };
 });
 
 // medya seçici
@@ -324,27 +351,95 @@ $$('[data-close]').forEach(b => b.onclick = () => b.closest('.modal').classList.
 $$('.modal').forEach(m => m.addEventListener('mousedown', e => { if (e.target === m) m.classList.remove('open'); }));
 
 // ============================================================ İÇERİK
+// Fikir üretimi: Gemini (ücretsiz, elle). İstek metni sunucuda kurulur; cevap buraya yapıştırılır.
+let gemTrend = '';
+const IMG_RATIO = f => /Reel|Story|Short/i.test(f || '') ? ['9:16', 1080, 1920] : /Uzun video/i.test(f || '') ? ['16:9', 1920, 1080] : ['4:5', 1080, 1350];
+const imageAsk = (prompt, format) => { const [r, w, h] = IMG_RATIO(format); return `${String(prompt).trim().replace(/\.?$/, '.')} Aspect ratio ${r} (${w}x${h} px). Photorealistic, premium, dark and calm mood. No text, no logos, no readable licence plates, no recognisable faces.`; };
+const normPick = (v, list) => { const s = String(v || '').trim().toLowerCase(); return list.find(x => x.toLowerCase() === s) || list.find(x => s && (x.toLowerCase().includes(s) || s.includes(x.toLowerCase()))) || ''; };
+// Gemini cevabından fikirleri çıkar: kod bloğu, öncesi/sonrası açıklama, {ideas:[...]} biçimi tolere edilir
+function parseIdeas(text) {
+  let t = String(text || '').replace(/```(?:json)?/gi, '').trim();
+  const a = t.indexOf('['), b = t.lastIndexOf(']');
+  let data = null;
+  if (a >= 0 && b > a) { try { data = JSON.parse(t.slice(a, b + 1)); } catch { } }
+  if (!data) { const o = t.indexOf('{'), c = t.lastIndexOf('}'); if (o >= 0 && c > o) { try { const j = JSON.parse(t.slice(o, c + 1)); data = j.ideas || j.items || j.posts || (Array.isArray(j) ? j : null); } catch { } } }
+  if (!Array.isArray(data)) throw new Error('Cevapta fikir listesi bulunamadı. Gemini\'nin cevabının tamamını (köşeli parantezle başlayan kısmı) yapıştırdığından emin ol.');
+  const out = data.filter(x => x && typeof x === 'object' && (x.title || x.topic)).map(x => ({
+    title: String(x.title || x.topic).trim(), pillar: normPick(x.pillar, PILLARS), platform: normPick(x.platform, PLATFORMS),
+    format: normPick(x.format, FORMATS.filter(f => f !== '-')), caption: String(x.caption || '').trim(),
+    hashtags: Array.isArray(x.hashtags) ? x.hashtags.join(' ') : String(x.hashtags || '').trim(),
+    notes: String(x.notes || x.shot_list || '').trim(), imagePrompt: String(x.image_prompt || x.imagePrompt || '').trim(),
+  }));
+  if (!out.length) throw new Error('Listede başlığı olan fikir yok.');
+  return out;
+}
+async function gemPrepare() {
+  const r = await api('/api/prompts/ideas', { method: 'POST', body: { brief: $('#genBrief').value, pillar: $('#genPillar').value, platform: $('#genPlatform').value, count: $('#genCount').value, trend: gemTrend } });
+  $('#gemPrompt').value = r.prompt; $('#gemPaste').value = ''; $('#gemPreview').innerHTML = ''; $('#gemMsg').textContent = '';
+  $('#gemPanel').style.display = '';
+  $('#gemPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+$('#gemPrep').onclick = () => busy($('#gemPrep'), gemPrepare);
+$('#gemClose').onclick = () => { $('#gemPanel').style.display = 'none'; };
+$('#gemCopy').onclick = async () => { await copy($('#gemPrompt').value); $('#gemMsg').textContent = 'Kopyalandı. Gemini\'ye yapıştır, cevabı sağdaki kutuya yapıştır.'; };
+let gemItems = [];
+$('#gemParse').onclick = () => {
+  try { gemItems = parseIdeas($('#gemPaste').value); } catch (e) { $('#gemPreview').innerHTML = ''; return toast(e.message, true); }
+  $('#gemMsg').textContent = `${gemItems.length} fikir bulundu.`;
+  $('#gemPreview').innerHTML = `<div class="cards">${gemItems.map((x, i) => `<label class="card" style="cursor:pointer">
+      <div class="row spread"><span><input type="checkbox" data-gi="${i}" checked style="width:auto;margin-right:6px"><b>${esc(x.title)}</b></span>${x.platform ? `<span class="pf">${PF[x.platform] || esc(x.platform)}</span>` : ''}</div>
+      <div class="small muted">${esc(x.pillar || 'sütun yok')}${x.format ? ' · ' + esc(x.format) : ''}</div>
+      ${x.caption ? `<div class="cap">${esc(x.caption)}${x.hashtags ? '\n' + esc(x.hashtags) : ''}</div>` : ''}
+      ${x.notes ? `<div class="small muted">Çekim: ${esc(x.notes)}</div>` : ''}
+      ${x.imagePrompt ? `<div class="small muted">Görsel: ${esc(x.imagePrompt.slice(0, 160))}${x.imagePrompt.length > 160 ? '…' : ''}</div>` : ''}
+    </label>`).join('')}</div>
+    <div class="row"><button class="btn primary" id="gemAdd">Seçilenleri bankaya ekle</button></div>`;
+  const upd = () => { $('#gemAdd').textContent = `Seçilenleri bankaya ekle (${$$('#gemPreview [data-gi]:checked').length})`; };
+  $$('#gemPreview [data-gi]').forEach(c => c.onchange = upd); upd();
+  $('#gemAdd').onclick = () => busy($('#gemAdd'), async () => {
+    const sel = $$('#gemPreview [data-gi]:checked').map(c => gemItems[c.dataset.gi]);
+    if (!sel.length) throw new Error('En az bir fikir seç');
+    const list = await api('/api/ideas/bulk', { method: 'POST', body: { items: sel, source: gemTrend ? 'gemini+trend' : 'gemini' } });
+    state.ideas.unshift(...list); renderIdeas();
+    $('#gemPanel').style.display = 'none'; gemTrend = ''; $('#genTrend').style.display = 'none';
+    toast(`${list.length} fikir bankaya eklendi`);
+    $('#ideas').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+};
+// trendden fikir: Trendler sekmesindeki sonucun özeti isteğe eklenir
+function ideaFromTrend(summary, keyword) {
+  gemTrend = summary;
+  $('#genBrief').value = `Content ideas built on this trend: "${keyword}". Relate it naturally to dash cams, safe driving or evidence for ICBC claims in Vancouver/BC.`;
+  $('#genTrend').innerHTML = `<span class="relb">trend verisi eklendi</span> <span class="muted">${esc(summary.slice(0, 200))}${summary.length > 200 ? '…' : ''}</span> <a href="#" id="genTrendX">kaldır</a>`;
+  $('#genTrend').style.display = '';
+  $('#genTrendX').onclick = e => { e.preventDefault(); gemTrend = ''; $('#genTrend').style.display = 'none'; };
+  location.hash = '#icerik';
+  gemPrepare().catch(e => toast(e.message, true));
+}
 function renderIdeas() {
   const fp = $('#idPillar').value, fpl = $('#idPlatform').value, open = $('#idOpen').checked, q = $('#idSearch').value.trim().toLocaleLowerCase('tr');
   const onCal = i => i.usedPostId && state.posts.find(p => p.id === i.usedPostId);
   const list = state.ideas.filter(i => (!fp || i.pillar === fp) && (!fpl || i.platform === fpl) && (!open || !onCal(i))
-    && (!q || `${i.title} ${i.caption} ${i.notes}`.toLocaleLowerCase('tr').includes(q)));
+    && (!q || `${i.title} ${i.caption} ${i.notes} ${i.hashtags || ''}`.toLocaleLowerCase('tr').includes(q)));
   const used = state.ideas.filter(onCal).length;
   $('#ideaCount').textContent = `${state.ideas.length} fikir · ${used} takvimde${list.length !== state.ideas.length ? ` · ${list.length} gösteriliyor` : ''}`;
   $('#ideas').innerHTML = list.length ? list.map(i => {
     const post = onCal(i);
     return `<div class="card ${post ? 'used' : ''}" data-id="${i.id}">
       <div class="row spread"><b>${esc(i.title)}</b>${i.platform ? `<span class="pf">${PF[i.platform] || esc(i.platform)}</span>` : ''}</div>
-      <div class="row small muted">${esc(i.pillar)}${i.format ? ' · ' + esc(i.format) : ''}${post ? ` · <span class="st-Yayınlandı">Takvimde: ${esc(fmtDay(post.date))}</span>` : ''}</div>
-      ${i.caption ? `<div class="cap">${esc(i.caption)}</div>` : ''}
-      ${i.notes ? `<div class="small muted">${esc(i.notes)}</div>` : ''}
-      <div class="actions">${post ? '<button class="btn sm" data-a="open">Takvimde aç</button>' : '<button class="btn sm primary" data-a="cal">Takvime ekle</button>'}<button class="btn sm" data-a="copy">Kopyala</button><button class="btn sm danger" data-a="del">Sil</button></div>
+      <div class="row small muted">${esc(i.pillar)}${i.format ? ' · ' + esc(i.format) : ''}${post ? ` · <span class="st-Yayınlandı">Takvimde: ${esc(fmtDay(post.date))}</span>` : ''}${/trend/.test(i.source || '') ? ' · <span class="relb">trendden</span>' : ''}</div>
+      ${i.caption || i.hashtags ? `<div class="cap">${esc(i.caption)}${i.hashtags ? (i.caption ? '\n' : '') + esc(i.hashtags) : ''}</div>` : ''}
+      ${i.notes ? `<div class="small muted">Çekim: ${esc(i.notes)}</div>` : ''}
+      ${i.imagePrompt ? `<details class="small"><summary class="muted">Görsel tarifi</summary><div class="muted" style="margin-top:4px">${esc(i.imagePrompt)}</div></details>` : ''}
+      <div class="actions">${post ? '<button class="btn sm" data-a="open">Takvimde aç</button>' : '<button class="btn sm primary" data-a="cal">Takvime ekle</button>'}<button class="btn sm" data-a="edit">Düzenle</button><button class="btn sm" data-a="copy">Caption'ı kopyala</button>${i.imagePrompt ? '<button class="btn sm" data-a="img" title="ChatGPT\'ye yapıştır; doğru oran eklenir">Görsel tarifini kopyala</button>' : ''}<button class="btn sm danger" data-a="del">Sil</button></div>
     </div>`;
-  }).join('') : `<div class="empty">${state.ideas.length ? 'Filtreye uyan fikir yok.' : 'Henüz fikir yok. Yukarıdan üret ya da elle ekle.'}</div>`;
+  }).join('') : `<div class="empty">${state.ideas.length ? 'Filtreye uyan fikir yok.' : 'Henüz fikir yok. Yukarıdan Gemini ile üret ya da elle ekle.'}</div>`;
   $$('#ideas .card').forEach(card => card.onclick = async e => {
     const a = e.target.dataset.a; if (!a) return;
     const idea = state.ideas.find(x => x.id === card.dataset.id);
-    if (a === 'copy') return copy(idea.caption);
+    if (a === 'copy') return copy([idea.caption, idea.hashtags].filter(Boolean).join('\n\n'));
+    if (a === 'img') { await copy(imageAsk(idea.imagePrompt, idea.format)); return toast('Görsel tarifi kopyalandı. ChatGPT\'ye yapıştır; üretilen görseli Görsel sekmesinden yükle.'); }
+    if (a === 'edit') return openIdea(idea);
     if (a === 'del') {
       if (!confirm('Fikir silinsin mi?')) return;
       try { await api(`/api/ideas/${idea.id}`, { method: 'DELETE' }); } catch (err) { return toast(err.message, true); }
@@ -355,10 +450,26 @@ function renderIdeas() {
       const pf = idea.platform ? [idea.platform] : ['Instagram'];
       if (pf[0] === 'Instagram') pf.push('Facebook');
       location.hash = '#takvim';
-      openPost({ date: nextFreeDate(), time: '18:00', platforms: pf, format: idea.format, pillar: idea.pillar, topic: idea.title, caption: idea.caption, notes: idea.notes, status: 'Taslak', mediaIds: [], ideaId: idea.id });
+      openPost({ date: nextFreeDate(), time: '18:00', platforms: pf, format: idea.format, pillar: idea.pillar, topic: idea.title,
+        caption: [idea.caption, idea.hashtags].filter(Boolean).join('\n\n'), notes: idea.notes, imagePrompt: idea.imagePrompt || '', status: 'Taslak', mediaIds: [], ideaId: idea.id });
     }
   });
 }
+let editingIdea = null;
+function openIdea(i) {
+  editingIdea = i;
+  $('#imTitle').value = i.title || ''; $('#imCaption').value = i.caption || ''; $('#imHashtags').value = i.hashtags || '';
+  $('#imNotes').value = i.notes || ''; $('#imImage').value = i.imagePrompt || '';
+  $('#imPillar').innerHTML = opts(PILLARS, i.pillar, 'Seç'); $('#imPlatform').innerHTML = opts(PLATFORMS, i.platform, 'Seç'); $('#imFormat').innerHTML = opts(FORMATS.filter(f => f !== '-'), i.format, 'Seç');
+  $('#ideaModal').classList.add('open');
+}
+$('#imSave').onclick = () => busy($('#imSave'), async () => {
+  if (!$('#imTitle').value.trim()) throw new Error('Başlık boş olamaz');
+  const body = { title: $('#imTitle').value.trim(), pillar: $('#imPillar').value, platform: $('#imPlatform').value, format: $('#imFormat').value,
+    caption: $('#imCaption').value, hashtags: $('#imHashtags').value.trim(), notes: $('#imNotes').value, imagePrompt: $('#imImage').value.trim() };
+  const saved = await api(`/api/ideas/${editingIdea.id}`, { method: 'PUT', body });
+  Object.assign(editingIdea, saved); $('#ideaModal').classList.remove('open'); renderIdeas(); toast('Fikir güncellendi');
+});
 ['#idPillar', '#idPlatform', '#idOpen'].forEach(s => $(s).onchange = renderIdeas);
 $('#idSearch').oninput = renderIdeas;
 $('#genBtn').onclick = () => busy($('#genBtn'), async () => {
@@ -367,7 +478,7 @@ $('#genBtn').onclick = () => busy($('#genBtn'), async () => {
 });
 $('#manBtn').onclick = () => busy($('#manBtn'), async () => {
   if (!$('#manTitle').value.trim()) throw new Error('Başlık yaz');
-  const i = await api('/api/ideas', { method: 'POST', body: { title: $('#manTitle').value, pillar: $('#manPillar').value, platform: $('#manPlatform').value, format: $('#manFormat').value, caption: $('#manCaption').value } });
+  const i = await api('/api/ideas', { method: 'POST', body: { title: $('#manTitle').value, pillar: $('#manPillar').value, platform: $('#manPlatform').value, format: $('#manFormat').value, caption: $('#manCaption').value, source: 'elle' } });
   state.ideas.unshift(i); renderIdeas(); $('#manTitle').value = ''; $('#manCaption').value = ''; toast('Bankaya eklendi');
 });
 
@@ -756,7 +867,7 @@ function renderGeneric(d) {
   return (rows.length ? `<div class="svc">${rows.join('')}</div>` : '') + (list.length ? `<ol class="stack" style="padding-left:20px;margin:8px 0 0">${list.slice(0, 30).map(x => `<li>${esc(x.title)}${x.meta ? `<div class="small muted">${esc(x.meta)}</div>` : ''}</li>`).join('')}</ol>` : '');
 }
 function showTrend(t) {
-  trLast = t; $('#trSave').disabled = false;
+  trLast = t; $('#trSave').disabled = false; $('#trIdea').disabled = false;
   const data = unwrapTrend(t.text);
   $('#trResult').textContent = data && typeof data === 'object' ? JSON.stringify(data, null, 2) : (t.text || '(boş sonuç)');
   const a = t.args || {};
@@ -770,6 +881,13 @@ function showTrend(t) {
   } else if (t.text) html = `<p>${esc(String(t.text).slice(0, 1200))}</p>`;
   $('#trView').innerHTML = title + (html || `<p class="muted">Bu sonuçta gösterilecek veri yok. Başka bir konu ya da kaynak dene.</p>`);
 }
+$('#trIdea').onclick = () => {
+  if (!trLast) return;
+  const a = trLast.args || {};
+  const summary = [...$$('#trView .tr-sum div')].map(e => e.innerText).join(' ') || $('#trView').innerText.slice(0, 800);
+  const items = trLast.tool === 'get_top_trends' || trLast.tool === 'get_top_posts' ? [...$$('#trView li')].slice(0, 15).map(li => li.innerText.split('\n')[0]).join('; ') : '';
+  ideaFromTrend(`${summary}${items ? ' Items: ' + items : ''}`.slice(0, 1500), a.keyword ? (trLast.tool === 'get_top_posts' ? '#' : '') + a.keyword : trLabel(a.type, FEED_LABEL));
+};
 $('#trSave').onclick = () => busy($('#trSave'), async () => {
   if (!trLast) return;
   const a = trLast.args || {};
@@ -943,6 +1061,7 @@ async function init() {
   state.posts = posts.value || []; state.ideas = ideas.value || []; state.media = media.value || [];
   const firstErr = [posts, ideas, media].find(r => r.status === 'rejected');
   if (firstErr && state.status.storage) toast('Veriler yüklenemedi: ' + firstErr.reason.message, true);
+  $('#genBtn').style.display = state.status.claude ? '' : 'none';
   renderBanner(); renderCalendar(); renderIdeas(); loadTrendHistory(); showTab();
 }
 function renderBanner() {
