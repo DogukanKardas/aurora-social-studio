@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Giriş — Aurora Social Studio</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+    .login { width: min(360px, 100%); }
+    .login .brand { margin-bottom: 24px; text-align: center; }
+    #err { color: var(--err); min-height: 20px; font-size: 13px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <form class="panel login" id="f">
+    <div class="brand">AURORA<span>Social Studio</span></div>
+    <label for="u">Kullanıcı adı</label>
+    <input id="u" autocomplete="username" required autofocus>
+    <label for="p">Şifre</label>
+    <input id="p" type="password" autocomplete="current-password" required>
+    <div id="err"></div>
+    <button class="btn primary" style="width:100%;margin-top:8px">Giriş yap</button>
+  </form>
+  <script>
+    document.getElementById('f').onsubmit = async e => {
+      e.preventDefault();
+      const btn = e.target.querySelector('button'); btn.disabled = true;
+      const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: document.getElementById('u').value, pass: document.getElementById('p').value }) });
+      if (r.ok) return location.replace('/');
+      const d = await r.json().catch(() => ({}));
+      document.getElementById('err').textContent = d.error || 'Giriş başarısız';
+      btn.disabled = false;
+    };
+  </script>
+</body>
+</html>

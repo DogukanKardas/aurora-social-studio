@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aurora Social Studio</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">AURORA<span>Social Studio</span></div>
+  <nav>
+    <a href="#takvim" data-tab="takvim">Takvim</a>
+    <a href="#icerik" data-tab="icerik">İçerik</a>
+    <a href="#trend" data-tab="trend">Trendler</a>
+    <a href="#gorsel" data-tab="gorsel">Görsel</a>
+    <a href="#video" data-tab="video">Video</a>
+    <a href="#ayarlar" data-tab="ayarlar">Ayarlar</a>
+  </nav>
+  <button class="btn sm" id="logout" style="margin-left:auto">Çıkış</button>
+</header>
+
+<main>
+  <div class="panel row spread" id="setupBanner" style="display:none;margin-bottom:16px;border-color:var(--warn)"></div>
+  <!-- TAKVİM -->
+  <section id="takvim">
+    <div class="row spread">
+      <div class="row">
+        <button class="btn" id="calPrev">‹</button>
+        <h2 id="calTitle"></h2>
+        <button class="btn" id="calNext">›</button>
+        <button class="btn sm" id="calToday">Bugün</button>
+      </div>
+      <div class="row" style="gap:8px">
+        <div class="seg" id="calView"><button data-view="month" class="on">Ay</button><button data-view="list">Liste</button></div>
+        <select id="calPlatform" style="width:auto"></select>
+        <button class="btn" id="calCsv" title="Görünen ayı Excel/Sheets için indir">CSV indir</button>
+        <button class="btn primary" id="calNew">+ Paylaşım</button>
+      </div>
+    </div>
+    <div class="stats" id="calStats" style="margin-top:14px"></div>
+    <div class="mix small" id="calMix"></div>
+    <div class="legend small muted"><span class="hol tatil">Resmi tatil</span><span class="hol pazarlama">Pazarlama günü</span><span>Güne tıkla: yeni paylaşım · Etikete tıkla: o güne özel paylaşım · Paylaşımı sürükleyip başka güne bırak</span></div>
+    <div class="cal" id="cal"></div>
+    <div id="calList" class="lst" style="display:none"></div>
+  </section>
+
+  <!-- İÇERİK -->
+  <section id="icerik">
+    <div class="grid2">
+      <div class="panel stack">
+        <h2>Fikir üret</h2>
+        <p class="muted small">Marka sesi ve içerik sütunları otomatik uygulanır. Üretilenler aşağıdaki fikir bankasına düşer.</p>
+        <label>Hazır konu</label>
+        <select id="genPreset"></select>
+        <label>Konu / yön (istersen düzenle)</label>
+        <textarea id="genBrief" placeholder="Hazır konu seç ya da kendin yaz"></textarea>
+        <div class="row">
+          <div style="flex:1"><label>Sütun</label><select id="genPillar"></select></div>
+          <div style="flex:1"><label>Platform</label><select id="genPlatform"></select></div>
+          <div style="width:90px"><label>Adet</label><input id="genCount" type="number" value="6" min="1" max="12"></div>
+        </div>
+        <button class="btn primary" id="genBtn">Fikir üret</button>
+      </div>
+      <div class="panel stack">
+        <h2>Elle ekle</h2>
+        <label>Başlık</label><input id="manTitle" placeholder="Konu">
+        <div class="row">
+          <div style="flex:1"><label>Sütun</label><select id="manPillar"></select></div>
+          <div style="flex:1"><label>Platform</label><select id="manPlatform"></select></div>
+        </div>
+        <label>Format</label><select id="manFormat"></select>
+        <label>Caption</label><textarea id="manCaption"></textarea>
+        <button class="btn" id="manBtn">Bankaya ekle</button>
+      </div>
+    </div>
+    <div class="row spread" style="margin:24px 0 12px"><h2>Fikir bankası</h2><span class="muted small" id="ideaCount"></span></div>
+    <div class="row" style="margin-bottom:12px;gap:8px">
+      <input id="idSearch" placeholder="Fikirlerde ara" style="flex:1;min-width:160px">
+      <select id="idPillar" style="width:auto"></select>
+      <select id="idPlatform" style="width:auto"></select>
+      <label class="small muted" style="margin:0"><input type="checkbox" id="idOpen" style="width:auto;margin-right:4px">Sadece takvime eklenmemiş</label>
+    </div>
+    <div class="cards" id="ideas"></div>
+  </section>
+
+  <!-- TRENDLER -->
+  <section id="trend">
+    <div class="grid2">
+      <div class="panel stack">
+        <h2>Trend araştırması</h2>
+        <label>Ne öğrenmek istiyorsun?</label>
+        <select id="trMode">
+          <option value="growth">Bir konu büyüyor mu? (büyüme oranı)</option>
+          <option value="series">Bir konunun ilgisi zamanla nasıl değişti?</option>
+          <option value="top">Şu an neler yükseliyor? (canlı liste)</option>
+        </select>
+        <div id="trTopicBox">
+          <label>Nerede bakalım?</label><select id="trSource"></select>
+          <label>Konu</label><select id="trKeyword"></select>
+          <input id="trKeywordCustom" placeholder="Kendi konunu yaz" style="display:none;margin-top:6px">
+        </div>
+        <div id="trWindowBox">
+          <label>Hangi dönem?</label>
+          <select id="trWindow">
+            <option value="1M,3M,12M">Son 1 ay, 3 ay ve 12 ay (karşılaştırmalı)</option>
+            <option value="30D">Son 30 gün</option>
+            <option value="3M">Son 3 ay</option>
+            <option value="6M">Son 6 ay</option>
+            <option value="12M">Son 12 ay</option>
+            <option value="YTD">Yılbaşından bu yana</option>
+          </select>
+        </div>
+        <div id="trFeedBox" style="display:none">
+          <label>Hangi liste?</label>
+          <select id="trFeed">
+            <option>YouTube Trending</option>
+            <option>TikTok Trending Hashtags</option>
+            <option>TikTok Trending Searches</option>
+            <option>Google Trends</option>
+            <option>Google News Top News</option>
+            <option>Reddit Hot Posts</option>
+            <option>X (Twitter) Trending</option>
+          </select>
+        </div>
+        <button class="btn primary" id="trRun">Göster</button>
+        <p class="muted small">Ücretsiz planda aylık istek sınırı var; her "Göster" bir istek harcar.</p>
+      </div>
+      <div class="panel stack">
+        <div class="row spread"><h2>Sonuç</h2><button class="btn sm" id="trSave" disabled>Fikir olarak kaydet</button></div>
+        <div id="trView"><p class="muted">Soldan seçimini yap ve "Göster"e bas.</p></div>
+        <details><summary class="muted small">Ham veri</summary><pre class="result" id="trResult"></pre></details>
+      </div>
+    </div>
+    <h2 style="margin:24px 0 12px">Geçmiş aramalar</h2>
+    <div class="cards" id="trHistory"></div>
+  </section>
+
+  <!-- GÖRSEL -->
+  <section id="gorsel">
+    <div class="panel row spread" id="canvaBar" style="margin-bottom:16px"></div>
+    <div class="grid2">
+      <div class="panel stack">
+        <h2>AI ile üret</h2>
+        <p class="muted small">Arka plan, doku ve atmosfer görselleri için. Ürün ve kurulum görseli için gerçek fotoğraf kullan.</p>
+        <label>Hazır sahne</label>
+        <select id="imgPreset"></select>
+        <label>Açıklama (istersen düzenle)</label>
+        <textarea id="imgPrompt" placeholder="Hazır sahne seç ya da kendin yaz"></textarea>
+        <div class="row">
+          <div style="flex:1"><label>Nerede kullanılacak?</label>
+            <select id="imgRatio"><option value="4:5">4:5 Instagram gönderi</option><option value="1:1">1:1 Kare</option><option value="9:16">9:16 Reel / Story / Short</option><option value="16:9">16:9 YouTube / LinkedIn</option></select></div>
+          <div style="width:90px"><label>Adet</label><input id="imgCount" type="number" value="2" min="1" max="4"></div>
+        </div>
+        <button class="btn primary" id="imgBtn">Üret</button>
+      </div>
+      <div class="panel stack">
+        <h2>Stok fotoğraf ara</h2>
+        <div class="row">
+          <select id="stSource" style="width:130px"><option value="pexels">Pexels</option><option value="pixabay">Pixabay</option><option value="unsplash">Unsplash</option><option value="openverse">Openverse (anahtarsız)</option></select>
+          <select id="stPreset" style="flex:1"></select>
+          <button class="btn" id="stBtn">Ara</button>
+        </div>
+        <input id="stQuery" placeholder="Kendi arama kelimeni yaz (İngilizce)" style="display:none">
+        <p class="muted small" id="stNote" style="display:none;margin:0">Openverse: yalnızca ticari kullanıma ve düzenlemeye izin veren lisanslar. CC BY lisanslılarda paylaşımda kaynak (credit) belirt — kütüphanede saklanır.</p>
+        <div class="media" id="stResults" style="max-height:420px;overflow:auto"></div>
+      </div>
+    </div>
+    <div class="row spread" style="margin:24px 0 12px">
+      <h2>Medya kütüphanesi</h2>
+      <label class="btn" style="margin:0">Kendi fotoğrafını yükle<input type="file" id="upFile" accept="image/*,video/mp4" multiple hidden></label>
+    </div>
+    <div class="media" id="library"></div>
+  </section>
+
+  <!-- VİDEO -->
+  <section id="video">
+    <div class="grid2">
+      <div class="panel stack">
+        <h2>Video üret</h2>
+        <p class="muted small">Kısa atmosfer ve geçiş klipleri için (5-6 sn). Üretim birkaç dakika sürer; sayfadan çıkabilirsin.</p>
+        <label>Hazır sahne</label>
+        <select id="vidPreset"></select>
+        <label>Açıklama (istersen düzenle)</label>
+        <textarea id="vidPrompt" placeholder="Hazır sahne seç ya da kendin yaz"></textarea>
+        <label>Başlangıç görseli (isteğe bağlı)</label>
+        <select id="vidImage"><option value="">Yok — sadece metinden</option></select>
+        <button class="btn primary" id="vidBtn">Üret</button>
+      </div>
+      <div class="panel stack">
+        <h2>İşler</h2>
+        <div id="vidJobs" class="stack"><p class="muted">Henüz video yok.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AYARLAR -->
+  <section id="ayarlar">
+    <div class="panel stack">
+      <h2>Bağlantılar</h2>
+      <p class="muted small">Anahtarlar Vercel'de <b>Project Settings → Environment Variables</b> altında durur (yerelde <b>.env</b> dosyasında). Değiştirdikten sonra yeniden yayınlamak gerekir.</p>
+      <div class="svc" id="svcList"></div>
+    </div>
+    <div class="panel stack" style="margin-top:16px">
+      <div class="row spread">
+        <h2>Sistem kontrolü</h2>
+        <div class="row" style="gap:6px">
+          <label class="small muted" style="margin:0"><input type="checkbox" id="diagLive" style="width:auto;margin-right:4px">Trend'i canlı dene (1 istek harcar)</label>
+          <button class="btn primary" id="diagRun">Kontrolü çalıştır</button>
+        </div>
+      </div>
+      <p class="muted small">Her servisi gerçek anahtarla dener ve sorunun nerede olduğunu gösterir. Anahtar değerleri hiçbir zaman gösterilmez.</p>
+      <div id="diagOut"></div>
+    </div>
+  </section>
+</main>
+
+<!-- paylaşım düzenleyici -->
+<div class="modal" id="postModal">
+  <div class="box stack">
+    <div class="row spread"><h2 id="pmTitle">Paylaşım</h2><button class="btn sm" data-close>Kapat</button></div>
+    <div class="row">
+      <div style="flex:1"><label>Tarih</label><input type="date" id="pmDate"></div>
+      <div style="width:120px"><label>Saat (Vancouver)</label><input type="time" id="pmTime"></div>
+      <div style="flex:1"><label>Durum</label><select id="pmStatus"></select></div>
+    </div>
+    <div id="pmDayInfo" class="small"></div>
+    <label>Platformlar</label><div class="row" id="pmPlatforms"></div>
+    <div class="row">
+      <div style="flex:1"><label>Format</label><select id="pmFormat"></select></div>
+      <div style="flex:1"><label>Sütun</label><select id="pmPillar"></select></div>
+    </div>
+    <label>Konu</label><input id="pmTopic">
+    <div class="row spread"><label>Caption</label>
+      <div class="row" style="gap:6px">
+        <select id="pmTone" style="width:auto" class="small">
+          <option value="">Marka tonu (varsayılan)</option>
+          <option value="Make it shorter: 1-2 sentences.">Daha kısa</option>
+          <option value="More technical: mention specs like sensor, resolution, parking mode.">Daha teknik</option>
+          <option value="Warmer and more personal, still restrained.">Daha samimi</option>
+          <option value="Professional B2B tone for dealers and fleet managers.">LinkedIn / B2B</option>
+          <option value="Story-driven: open with a real-life driving moment.">Hikâye ile başla</option>
+        </select>
+        <button class="btn sm" id="pmSuggest">Caption öner</button>
+      </div>
+    </div>
+    <textarea id="pmCaption" rows="5"></textarea>
+    <div class="small muted" id="pmCount"></div>
+    <div id="pmSuggestions" class="stack"></div>
+    <label>Notlar (çekim, hazırlık)</label><textarea id="pmNotes" rows="2"></textarea>
+    <div class="row spread"><label>Renk paleti (Canva tasarımı için)</label>
+      <div class="row" style="gap:6px">
+        <select id="pmPalMode" class="small" style="width:auto"><option value="brand">Marka renkleri sabit (siyah + krem)</option><option value="color">Seçtiğim renkten</option><option value="free">Tamamen yeni</option></select>
+        <input type="color" id="pmPalBase" value="#7aa7d9" style="width:40px;padding:2px;display:none">
+        <button class="btn sm" id="pmPalBtn">Palet öner</button>
+      </div>
+    </div>
+    <div class="row" id="pmPalette" style="gap:6px"></div>
+    <div class="row spread"><label>Medya</label><button class="btn sm" id="pmAddMedia">Kütüphaneden ekle</button></div>
+    <div class="thumbs" id="pmMedia"></div>
+    <div class="row spread" style="margin-top:8px">
+      <div class="row"><button class="btn danger" id="pmDelete">Sil</button><button class="btn" id="pmDup" title="Aynı içeriği bir hafta sonrasına kopyala">Çoğalt</button></div>
+      <div class="row"><button class="btn" id="pmCopy">Caption'ı kopyala</button><button class="btn primary" id="pmSave">Kaydet</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- medya seçici -->
+<div class="modal" id="pickModal">
+  <div class="box stack">
+    <div class="row spread"><h2>Medya seç</h2><button class="btn primary sm" id="pickDone">Tamam</button></div>
+    <div class="media" id="pickList"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>
